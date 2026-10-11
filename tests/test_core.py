@@ -9,9 +9,9 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-import runner
-import session
-import solver
+from captcha import hcaptcha, solver
+from inss import session
+from inss import workflow as runner
 
 
 class CoreTests(unittest.TestCase):
@@ -39,8 +39,8 @@ class CoreTests(unittest.TestCase):
     def test_grid_difference_detects_a_new_grid(self):
         old = Image.new("RGB", (30, 30), "black")
         new = Image.new("RGB", (30, 30), "white")
-        self.assertEqual(runner.grid_difference(old, old, (0, 0, 30, 30)), 0)
-        self.assertGreater(runner.grid_difference(old, new, (0, 0, 30, 30)), 40)
+        self.assertEqual(hcaptcha.grid_difference(old, old, (0, 0, 30, 30)), 0)
+        self.assertGreater(hcaptcha.grid_difference(old, new, (0, 0, 30, 30)), 40)
 
     def test_new_grid_ends_verdict_wait_with_same_frame_count(self):
         old = Image.effect_noise((400, 582), 50).convert("RGB")
@@ -52,12 +52,12 @@ class CoreTests(unittest.TestCase):
         class Page:
             captures = 0
 
-            def evaluate(self, js):
-                if js == runner.VIEWPORT_JS:
+            def evaluate(self, js, *args):
+                if js == hcaptcha.VIEWPORT_JS:
                     return {"width": 1280, "height": 582}
-                if js == runner.IFRAME_JS:
+                if js == hcaptcha.IFRAME_JS:
                     return [{"x": 0, "y": 0, "w": 400, "h": 600}]
-                return {"tok": 0, "pwd": False, "frames": 2}
+                return {"tok": 0, "done": False, "frames": 2}
 
             def screenshot(self, path=None, **kwargs):
                 if path:
@@ -71,9 +71,9 @@ class CoreTests(unittest.TestCase):
 
         page = Page()
         with tempfile.TemporaryDirectory() as out, \
-             patch.object(runner, "solve", return_value=[1]), \
-             patch.object(runner, "click"):
-            done, info = runner.solve_round(page, out, 0, "test")
+             patch.object(hcaptcha, "solve", return_value=[1]), \
+             patch.object(hcaptcha, "click"):
+            done, info = hcaptcha.solve_round(page, out, 0, "test")
         self.assertFalse(done)
         self.assertEqual(page.captures, 2)
         self.assertTrue(info["next_round_ready"])
@@ -83,8 +83,8 @@ class CoreTests(unittest.TestCase):
         ready = Image.effect_noise((400, 582), 50).convert("RGB")
 
         class Page:
-            def evaluate(self, js):
-                if js == runner.VIEWPORT_JS:
+            def evaluate(self, js, *args):
+                if js == hcaptcha.VIEWPORT_JS:
                     return {"width": 1280, "height": 582}
                 return [{"x": 0, "y": 0, "w": 400, "h": 582}]
 
@@ -95,9 +95,9 @@ class CoreTests(unittest.TestCase):
                 pass
 
         with tempfile.TemporaryDirectory() as out, \
-             patch.object(runner, "solve", return_value=[]), \
-             patch.object(runner, "click") as click:
-            done, info = runner.solve_round(Page(), out, 0, "test")
+             patch.object(hcaptcha, "solve", return_value=[]), \
+             patch.object(hcaptcha, "click") as click:
+            done, info = hcaptcha.solve_round(Page(), out, 0, "test")
         self.assertFalse(done)
         self.assertEqual(info["why"], "empty-picks")
         click.assert_not_called()
@@ -116,7 +116,7 @@ class CoreTests(unittest.TestCase):
              patch.object(runner, "submit_cpf"), \
              patch.object(runner, "vis_modal", return_value=[{}]), \
              patch.object(runner, "find_page", return_value=None), \
-             patch.object(runner, "page_state", return_value={"pwd": False}), \
+             patch.object(runner, "page_state", return_value={"done": False}), \
              patch.object(runner, "log"), \
              patch("builtins.print"), \
              patch.object(runner, "solve_round", side_effect=[
@@ -144,7 +144,7 @@ class CoreTests(unittest.TestCase):
              patch.object(runner, "submit_password"), \
              patch.object(runner, "vis_modal", return_value=[{}]), \
              patch.object(runner, "find_page", return_value=None), \
-             patch.object(runner, "page_state", return_value={"pwd": False}), \
+             patch.object(runner, "page_state", return_value={"done": False}), \
              patch.object(runner, "solve_round", return_value=(True, {"round": 0})), \
              patch.object(runner, "harvest_tokens", return_value={"auth": "x", "mi": "y"}), \
              patch.object(runner, "extract", return_value={
@@ -163,14 +163,18 @@ class CoreTests(unittest.TestCase):
         class Page:
             state_calls = 0
 
-            def evaluate(self, js):
-                if js == runner.VIEWPORT_JS:
+            def evaluate(self, js, *args):
+                if js == hcaptcha.VIEWPORT_JS:
                     return {"width": 1280, "height": 582}
-                if js == runner.IFRAME_JS:
+                if js == hcaptcha.IFRAME_JS:
                     return [] if self.state_calls >= 2 else [{"x": 0, "y": 0, "w": 400, "h": 600}]
+                self.assert_success_selector(args)
                 self.state_calls += 1
-                return {"tok": 0, "pwd": self.state_calls >= 3,
+                return {"tok": 0, "done": self.state_calls >= 3,
                         "frames": 2 if self.state_calls == 1 else 0}
+
+            def assert_success_selector(self, args):
+                assert args == ('input[type="password"]',)
 
             def screenshot(self, path=None, **kwargs):
                 ready.save(path)
@@ -180,11 +184,12 @@ class CoreTests(unittest.TestCase):
 
         page = Page()
         with tempfile.TemporaryDirectory() as out, \
-             patch.object(runner, "solve", return_value=[1]), \
-             patch.object(runner, "click"):
-            done, info = runner.solve_round(page, out, 0, "test")
+             patch.object(hcaptcha, "solve", return_value=[1]), \
+             patch.object(hcaptcha, "click"):
+            done, info = hcaptcha.solve_round(
+                page, out, 0, "test", success_selector='input[type="password"]')
         self.assertTrue(done)
-        self.assertTrue(info["state_after"]["pwd"])
+        self.assertTrue(info["state_after"]["done"])
         self.assertEqual(page.state_calls, 3)
 
     def test_solver_collects_billed_usage(self):
@@ -210,7 +215,7 @@ class CoreTests(unittest.TestCase):
         class Page:
             calls = 0
 
-            def evaluate(self, js):
+            def evaluate(self, js, *args):
                 return {"width": 1280, "height": 582}
 
             def screenshot(self, **kwargs):
@@ -224,8 +229,8 @@ class CoreTests(unittest.TestCase):
 
         page = Page()
         moved = {"x": 15, "y": 20, "w": 400, "h": 582}
-        with patch.object(runner, "vis_modal", return_value=[moved]):
-            clip = runner.shot(page, "unused.png", {"x": 0, "y": 0,
+        with patch.object(hcaptcha, "vis_modal", return_value=[moved]):
+            clip = hcaptcha.shot(page, "unused.png", {"x": 0, "y": 0,
                                                      "width": 400, "height": 582})
         self.assertEqual(page.calls, 2)
         self.assertEqual(clip, page.clip)
