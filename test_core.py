@@ -1,9 +1,10 @@
 import io
 import os
+import sys
 import tempfile
 import unittest
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
@@ -37,8 +38,10 @@ class CoreTests(unittest.TestCase):
             captures = 0
 
             def evaluate(self, js):
+                if js == runner.VIEWPORT_JS:
+                    return {"width": 1280, "height": 582}
                 if js == runner.IFRAME_JS:
-                    return [{"x": 0, "y": 0, "w": 400, "h": 582}]
+                    return [{"x": 0, "y": 0, "w": 400, "h": 600}]
                 return {"tok": 0, "pwd": False, "frames": 2}
 
             def screenshot(self, path=None, **kwargs):
@@ -57,7 +60,7 @@ class CoreTests(unittest.TestCase):
              patch.object(runner, "click"):
             done, info = runner.solve_round(page, out, 0, "test")
         self.assertFalse(done)
-        self.assertGreaterEqual(page.captures, 2)
+        self.assertEqual(page.captures, 2)
         self.assertTrue(info["next_round_ready"])
         self.assertTrue(info["submitted"])
 
@@ -66,6 +69,8 @@ class CoreTests(unittest.TestCase):
 
         class Page:
             def evaluate(self, js):
+                if js == runner.VIEWPORT_JS:
+                    return {"width": 1280, "height": 582}
                 return [{"x": 0, "y": 0, "w": 400, "h": 582}]
 
             def screenshot(self, path=None, **kwargs):
@@ -81,6 +86,63 @@ class CoreTests(unittest.TestCase):
         self.assertFalse(done)
         self.assertEqual(info["why"], "empty-picks")
         click.assert_not_called()
+
+    def test_capture_retry_does_not_repeat_partial_clicks(self):
+        page = Mock()
+        browser = Mock(contexts=[Mock(pages=[page])])
+        with tempfile.TemporaryDirectory() as out, \
+             patch.object(sys, "argv", ["runner.py", "--cpf", "12345678901", "--out", out]), \
+             patch.dict(os.environ, {"GOVBR_PASSWORD": "test", "OPENROUTER_API_KEY": "test"}), \
+             patch.object(runner, "load_dotenv"), \
+             patch.object(runner.os, "umask"), \
+             patch.object(runner, "ManagedBrowser"), \
+             patch.object(runner, "sync_playwright") as playwright, \
+             patch.object(runner, "goto_login"), \
+             patch.object(runner, "submit_cpf"), \
+             patch.object(runner, "vis_modal", return_value=[{}]), \
+             patch.object(runner, "find_page", return_value=None), \
+             patch.object(runner, "page_state", return_value={"pwd": False}), \
+             patch.object(runner, "log"), \
+             patch("builtins.print"), \
+             patch.object(runner, "solve_round", side_effect=[
+                 (False, {"why": "shot-fail"}),
+                 (False, {"why": "interrupted-clicks"}),
+             ]) as solve:
+            playwright.return_value.__enter__.return_value.chromium.connect_over_cdp.return_value = browser
+            self.assertEqual(runner.main(), 2)
+        self.assertEqual(solve.call_count, 2)
+        self.assertEqual([call.args[2] for call in solve.call_args_list], [0, 0])
+        browser.close.assert_called_once()
+
+    def test_verdict_waits_for_password_after_frame_disappears(self):
+        ready = Image.effect_noise((400, 582), 50).convert("RGB")
+
+        class Page:
+            state_calls = 0
+
+            def evaluate(self, js):
+                if js == runner.VIEWPORT_JS:
+                    return {"width": 1280, "height": 582}
+                if js == runner.IFRAME_JS:
+                    return [] if self.state_calls >= 2 else [{"x": 0, "y": 0, "w": 400, "h": 600}]
+                self.state_calls += 1
+                return {"tok": 0, "pwd": self.state_calls >= 3,
+                        "frames": 2 if self.state_calls == 1 else 0}
+
+            def screenshot(self, path=None, **kwargs):
+                ready.save(path)
+
+            def wait_for_timeout(self, ms):
+                pass
+
+        page = Page()
+        with tempfile.TemporaryDirectory() as out, \
+             patch.object(runner, "solve", return_value=[1]), \
+             patch.object(runner, "click"):
+            done, info = runner.solve_round(page, out, 0, "test")
+        self.assertTrue(done)
+        self.assertTrue(info["state_after"]["pwd"])
+        self.assertEqual(page.state_calls, 3)
 
     def test_solver_collects_billed_usage(self):
         class Response:
@@ -105,6 +167,9 @@ class CoreTests(unittest.TestCase):
         class Page:
             calls = 0
 
+            def evaluate(self, js):
+                return {"width": 1280, "height": 582}
+
             def screenshot(self, **kwargs):
                 self.calls += 1
                 if self.calls == 1:
@@ -122,6 +187,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(page.calls, 2)
         self.assertEqual(clip, page.clip)
         self.assertEqual(clip["x"], 15)
+        self.assertEqual(clip["height"], 562)
 
     def test_parallel_extraction_keeps_window_order_and_deduplication(self):
         class Response:

@@ -124,7 +124,7 @@ def extract(cpf_full, auth, mi, windows=None):
                           headers=headers, timeout=30)
         return rr, round(time.monotonic() - started, 1)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         futures = [pool.submit(get_window, window) for window in windows]
         started = time.monotonic()
         r = s.get(f"{API}/usuarioservices/info/{cpf_full}?refreshPedidos=false",

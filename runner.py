@@ -46,6 +46,7 @@ STATE_JS = """() => ({
   pwd: !!document.querySelector('input[type="password"]'),
   frames: document.querySelectorAll('iframe[src*="hcaptcha"]').length
 })"""
+VIEWPORT_JS = "() => ({width: innerWidth, height: innerHeight})"
 
 
 def load_dotenv():
@@ -88,6 +89,11 @@ def vis_modal(page):
             and 400 < x["h"] < 700 and -50 < x["y"] < 300]
 
 
+def modal_clip(page, box):
+    viewport = page.evaluate(VIEWPORT_JS)
+    return clamp_clip(box, viewport["width"], viewport["height"])
+
+
 def click(page, x, y):
     page.mouse.move(x + random.uniform(-3, 3), y + random.uniform(-3, 3), steps=12)
     page.wait_for_timeout(random.randint(150, 250))
@@ -119,7 +125,7 @@ def shot(page, path, clip, tries=2):
                 boxes = vis_modal(page)
                 if not boxes:
                     break
-                clip = clamp_clip(boxes[0])
+                clip = modal_clip(page, boxes[0])
     log(f"screenshot failed: {str(last)[:120]}")
     return None
 
@@ -149,7 +155,7 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None):
     info["modal_wait_s"] = round(time.monotonic() - t0, 1)
     if not boxes:
         return False, {**info, "why": "no-modal"}
-    clip = clamp_clip(boxes[0])
+    clip = modal_clip(page, boxes[0])
     shot_path = os.path.join(out_dir, f"r{rnd}-modal.png")
     t0 = time.monotonic()
     deadline = t0 + 8
@@ -198,7 +204,7 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None):
         if not boxes:
             info["stopped_at"] = n
             break
-        clip = clamp_clip(boxes[0])
+        clip = modal_clip(page, boxes[0])
         if (clip["width"], clip["height"]) != crop.size:
             fresh = os.path.join(out_dir, f"r{rnd}-geometry.png")
             clip = shot(page, fresh, clip)
@@ -214,7 +220,7 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None):
         return False, {**info, "why": "interrupted-clicks"}
     boxes = vis_modal(page)
     if boxes:
-        clip = clamp_clip(boxes[0])
+        clip = modal_clip(page, boxes[0])
         ax = clip["x"] + clip["width"] - 58
         ay = clip["y"] + clip["height"] - 38
         # settle: let widget register all toggles before submitting (race fix)
@@ -226,14 +232,13 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None):
     info["click_s"] = round(time.monotonic() - t0, 1)
     # poll: challenge verdict (token / password stage / new round) up to 15s
     t0 = time.monotonic()
-    st0 = page_state(page)
+    st = page_state(page)
     deadline = time.monotonic() + 15
-    st = st0
     candidate = None
     while time.monotonic() < deadline and not (st["tok"] > 0 or st["pwd"]):
         page.wait_for_timeout(500)
         st = page_state(page)
-        if st["tok"] > 0 or st["pwd"] or st["frames"] != st0["frames"]:
+        if st["tok"] > 0 or st["pwd"]:
             info["next_round_ready"] = True
             break
         try:
@@ -241,7 +246,7 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None):
             if not boxes:
                 continue
             fresh = Image.open(io.BytesIO(page.screenshot(
-                clip=clamp_clip(boxes[0]), timeout=2500)))
+                clip=modal_clip(page, boxes[0]), timeout=2500)))
             # shortcut: full-grid changes mark a new round; use frame state if tiles refresh individually.
             if grid_difference(crop, fresh, grid) > 40:
                 if candidate is not None and grid_difference(candidate, fresh, grid) < 10:
@@ -377,7 +382,11 @@ def main():
                     if done:
                         solved = True
                         break
-                    if info.get("why") == "no-modal" and time.monotonic() < modal_retry_deadline:
+                    if info.get("why") == "interrupted-clicks":
+                        # A blind retry can toggle already-selected tiles off.
+                        break
+                    if (info.get("why") in ("no-modal", "shot-fail", "tiles-not-ready")
+                            and time.monotonic() < modal_retry_deadline):
                         continue
                     rnd += 1
                     modal_retry_deadline = time.monotonic() + 25

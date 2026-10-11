@@ -58,8 +58,9 @@ def solve(header_img: Image.Image, tiles, model: str, timeout=90, ref_img=None,
                    {"type": "text", "text": "Tiles (numbered 1-9 row-major in reply):"}]
     for t in tiles:
         content.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + _b64(t)}})
+    # Avoid reserving credits for the provider's 65k-token output default.
     body = {"model": model, "messages": [{"role": "user", "content": content}],
-            "usage": {"include": True}}
+            "max_tokens": 4096, "usage": {"include": True}}
     if reasoning_effort:
         body["reasoning"] = {"effort": reasoning_effort}
     r = requests.post(API, headers={"Authorization": f"Bearer {key}",
