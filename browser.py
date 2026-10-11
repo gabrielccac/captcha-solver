@@ -38,16 +38,23 @@ class ManagedBrowser:
         self.procs = []
 
     def start(self, timeout=40):
+        if _port_open(self.cdp_port):
+            raise RuntimeError("CDP port already in use; choose another --cdp-port")
         os.makedirs(self.profile_dir, exist_ok=True)
-        env = dict(os.environ, DISPLAY=f":{self.display}")
+        env = dict(os.environ, DISPLAY=f":{self.display}", XDG_SESSION_TYPE="x11")
+        env.pop("WAYLAND_DISPLAY", None)
         xv = subprocess.Popen(["Xvfb", f":{self.display}", "-screen", "0",
                                f"{self.window.split(',')[0]}x{self.window.split(',')[1]}x24"],
                               stdout=open(f"/tmp/xvfb{self.display}.log", "ab"),
                               stderr=subprocess.STDOUT)
         self.procs.append(xv)
         time.sleep(2)
+        if xv.poll() is not None:
+            self.stop()
+            raise RuntimeError("Xvfb exited during startup")
         ch = subprocess.Popen(
             [self.chrome_bin, f"--user-data-dir={self.profile_dir}",
+             "--ozone-platform=x11",
              f"--remote-debugging-port={self.cdp_port}",
              "--no-first-run", "--no-default-browser-check",
              "--disable-dev-shm-usage", "--renderer-process-limit=4",
