@@ -92,15 +92,27 @@ def submit_password(page, password):
              desc="app landing")
 
 
-def harvest_tokens(page, timeout_s=20):
-    vals = {"auth": None, "mi": None}
-    for _ in range(timeout_s):
-        vals = page.evaluate("() => ({auth: localStorage.getItem('ifs_auth'),"
-                             " mi: localStorage.getItem('miToken')})")
-        if vals["auth"] and vals["mi"]:
-            break
+def harvest_tokens(page, cpf_full, timeout_s=20):
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            vals = page.evaluate("() => ({auth: localStorage.getItem('ifs_auth'),"
+                                 " mi: localStorage.getItem('miToken')})")
+        except Exception:
+            vals = {}
+        if vals.get("auth") and vals.get("mi"):
+            s, h = api_session(vals["auth"], vals["mi"])
+            try:
+                r = s.get(f"{API}/usuarioservices/info/{cpf_full}?refreshPedidos=false",
+                          headers=h, timeout=3)
+                if r.status_code == 200:
+                    return vals
+            except requests.RequestException:
+                pass
+            finally:
+                s.close()
         page.wait_for_timeout(1000)
-    return vals
+    return {"auth": None, "mi": None}
 
 
 def api_session(auth, mi):

@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from datetime import date
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from PIL import Image
@@ -14,6 +15,20 @@ import solver
 
 
 class CoreTests(unittest.TestCase):
+    def test_harvest_waits_for_usable_tokens(self):
+        page = Mock()
+        page.evaluate.side_effect = [
+            {"auth": "expired", "mi": "old"},
+            {"auth": "fresh", "mi": "new"},
+        ]
+        api = Mock()
+        api.get.side_effect = [Mock(status_code=401), Mock(status_code=200)]
+        with patch.object(session, "api_session", return_value=(api, {})) as connect:
+            self.assertEqual(session.harvest_tokens(page, "12345678901"),
+                             {"auth": "fresh", "mi": "new"})
+        self.assertEqual(connect.call_count, 2)
+        page.wait_for_timeout.assert_called_once_with(1000)
+
     def test_credit_windows_extend_without_changing_old_ranges(self):
         self.assertEqual(session.credit_windows(date(2026, 10, 11)), session.WINDOWS)
         self.assertEqual(session.credit_windows(date(2027, 11, 1))[-2:], [
@@ -113,6 +128,34 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(solve.call_count, 2)
         self.assertEqual([call.args[2] for call in solve.call_args_list], [0, 0])
         browser.close.assert_called_once()
+
+    def test_runner_rejects_unauthorized_follow_up_requests(self):
+        page = Mock()
+        page.evaluate.return_value = True
+        browser = Mock(contexts=[Mock(pages=[page])])
+        with tempfile.TemporaryDirectory() as out, \
+             patch.object(sys, "argv", ["runner.py", "--cpf", "12345678901", "--out", out]), \
+             patch.dict(os.environ, {"GOVBR_PASSWORD": "test", "OPENROUTER_API_KEY": "test"}), \
+             patch.object(runner, "load_dotenv"), \
+             patch.object(runner, "ManagedBrowser"), \
+             patch.object(runner, "sync_playwright") as playwright, \
+             patch.object(runner, "goto_login"), \
+             patch.object(runner, "submit_cpf"), \
+             patch.object(runner, "submit_password"), \
+             patch.object(runner, "vis_modal", return_value=[{}]), \
+             patch.object(runner, "find_page", return_value=None), \
+             patch.object(runner, "page_state", return_value={"pwd": False}), \
+             patch.object(runner, "solve_round", return_value=(True, {"round": 0})), \
+             patch.object(runner, "harvest_tokens", return_value={"auth": "x", "mi": "y"}), \
+             patch.object(runner, "extract", return_value={
+                 "userinfo_status": 401,
+                 "windows": [{"window": "test", "status": 401}],
+             }), \
+             patch.object(runner, "log"), \
+             patch("builtins.print"):
+            playwright.return_value.__enter__.return_value.chromium.connect_over_cdp.return_value = browser
+            self.assertEqual(runner.main(), 4)
+            self.assertFalse(list(Path(out).glob("extratos-*.json")))
 
     def test_verdict_waits_for_password_after_frame_disappears(self):
         ready = Image.effect_noise((400, 582), 50).convert("RGB")

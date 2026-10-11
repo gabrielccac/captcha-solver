@@ -413,15 +413,24 @@ def main():
                         page = app
                 page.screenshot(path=os.path.join(args.out, "after-pass.png"))
                 receipt["stages"]["password_s"] = round(time.time() - t0, 1)
-                toks = harvest_tokens(page)
+                toks = harvest_tokens(page, cpf_digits)
                 if not (toks["auth"] and toks["mi"]):
-                    receipt["fatal"] = "no tokens after login"
+                    receipt["fatal"] = "no valid tokens after login"
                     print(json.dumps(receipt, indent=1))
                     return 3
                 t0 = time.time()
                 log("extracting via requests")
                 data = extract(cpf_digits, toks["auth"], toks["mi"])
                 receipt["stages"]["extract_s"] = round(time.time() - t0, 1)
+                if (data["userinfo_status"] != 200 or
+                        any(w["status"] not in (200, 404) for w in data["windows"])):
+                    receipt["fatal"] = "API requests failed"
+                    receipt["userinfo_status"] = data["userinfo_status"]
+                    receipt["windows"] = [
+                        {"window": w["window"], "status": w["status"]}
+                        for w in data["windows"]]
+                    print(json.dumps(receipt, indent=1))
+                    return 4
                 base = os.path.join(args.out, f"extratos-{cpf_digits}")
                 json.dump(data, open(base + ".json", "w"), indent=1, ensure_ascii=False)
                 scalars = ["idCredito", "dtCompetenciaCredito", "nb", "dtInicioPeriodo",
