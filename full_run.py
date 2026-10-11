@@ -6,6 +6,7 @@ Usage: full_run.py --cdp URL --cpf-full 06284796200 --out-dir runs/full2out
 import argparse, csv, json, os, random, sys
 import requests
 from playwright.sync_api import sync_playwright
+from session import credit_windows
 
 def human_type(page, selector, text):
     loc = page.locator(selector).first
@@ -69,11 +70,8 @@ def main():
     out = {"windows": []}
     r = s.get(f"https://vip-pmeuinss-api.inss.gov.br/apis/usuarioservices/info/{cpf_full}?refreshPedidos=false", headers=h, timeout=30)
     out["userinfo_status"] = r.status_code
-    windows = [("01-09-2026", "31-10-2026"), ("01-12-2025", "31-10-2026"),
-               ("01-11-2025", "31-10-2026"),
-               ("01-11-2024", "31-10-2025"), ("01-11-2023", "31-10-2024")]
     all_credits, nbs = {}, None
-    for a, b_ in windows:
+    for a, b_ in credit_windows():
         rr = s.get(f"https://vip-pmeuinss-api.inss.gov.br/apis/hiscreServices/historicocreditos/{cpf_id}/{a}/{b_}", headers=h, timeout=30)
         w = {"window": f"{a}/{b_}", "status": rr.status_code}
         if rr.status_code == 200:

@@ -3,6 +3,9 @@ Pure CDP-page automation (caller owns browser/page). No secrets on disk.
 """
 import random
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
 
 import requests
 
@@ -19,6 +22,17 @@ API = "https://vip-pmeuinss-api.inss.gov.br/apis"
 WINDOWS = [("01-09-2026", "31-10-2026"), ("01-12-2025", "31-10-2026"),
            ("01-11-2025", "31-10-2026"), ("01-11-2024", "31-10-2025"),
            ("01-11-2023", "31-10-2024")]
+
+
+def credit_windows(today=None):
+    windows = list(WINDOWS)
+    start = date(2026, 11, 1)
+    today = today or date.today()
+    while start <= today:
+        end = start.replace(year=start.year + 1) - timedelta(days=1)
+        windows.append((start.strftime("%d-%m-%Y"), end.strftime("%d-%m-%Y")))
+        start = end + timedelta(days=1)
+    return windows
 
 
 def human_type(page, selector, text):
@@ -100,23 +114,37 @@ def extract(cpf_full, auth, mi, windows=None):
     s, h = api_session(auth, mi)
     cpf_id = cpf_full.lstrip("0")
     out = {"windows": [], "creditos": [], "beneficios": None}
-    r = s.get(f"{API}/usuarioservices/info/{cpf_full}?refreshPedidos=false",
-              headers=h, timeout=30)
-    out["userinfo_status"] = r.status_code
-    credits = {}
-    for a, b in (windows or WINDOWS):
-        rr = s.get(f"{API}/hiscreServices/historicocreditos/{cpf_id}/{a}/{b}",
-                   headers=h, timeout=30)
-        w = {"window": f"{a}/{b}", "status": rr.status_code}
-        if rr.status_code == 200:
-            body = rr.json()
-            w["n_credits"] = len(body.get("creditosTO", []))
-            out["beneficios"] = body.get("listaNbHiscreTO", [])
-            for c in body.get("creditosTO", []):
-                credits[c["idCredito"]] = c
-        else:
-            w["body"] = rr.text[:100]
-        out["windows"].append(w)
+    windows = windows or credit_windows()
+    headers = dict(s.headers, **h)
+
+    def get_window(window):
+        a, b = window
+        started = time.monotonic()
+        rr = requests.get(f"{API}/hiscreServices/historicocreditos/{cpf_id}/{a}/{b}",
+                          headers=headers, timeout=30)
+        return rr, round(time.monotonic() - started, 1)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(get_window, window) for window in windows]
+        started = time.monotonic()
+        r = s.get(f"{API}/usuarioservices/info/{cpf_full}?refreshPedidos=false",
+                  headers=h, timeout=30)
+        out["userinfo_status"] = r.status_code
+        out["userinfo_s"] = round(time.monotonic() - started, 1)
+        credits = {}
+        for (a, b), future in zip(windows, futures):
+            rr, elapsed = future.result()
+            w = {"window": f"{a}/{b}", "status": rr.status_code,
+                 "elapsed_s": elapsed}
+            if rr.status_code == 200:
+                body = rr.json()
+                w["n_credits"] = len(body.get("creditosTO", []))
+                out["beneficios"] = body.get("listaNbHiscreTO", [])
+                for c in body.get("creditosTO", []):
+                    credits[c["idCredito"]] = c
+            else:
+                w["body"] = rr.text[:100]
+            out["windows"].append(w)
     out["n_unique_credits"] = len(credits)
     out["creditos"] = [credits[k] for k in sorted(credits)]
     return out

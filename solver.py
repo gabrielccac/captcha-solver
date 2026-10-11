@@ -42,7 +42,7 @@ PROMPT_REF = (
 
 
 def solve(header_img: Image.Image, tiles, model: str, timeout=90, ref_img=None,
-          reasoning_effort=None) -> list[int]:
+          reasoning_effort=None, usage=None) -> list[int]:
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
@@ -58,14 +58,18 @@ def solve(header_img: Image.Image, tiles, model: str, timeout=90, ref_img=None,
                    {"type": "text", "text": "Tiles (numbered 1-9 row-major in reply):"}]
     for t in tiles:
         content.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + _b64(t)}})
-    body = {"model": model, "messages": [{"role": "user", "content": content}]}
+    body = {"model": model, "messages": [{"role": "user", "content": content}],
+            "usage": {"include": True}}
     if reasoning_effort:
         body["reasoning"] = {"effort": reasoning_effort}
     r = requests.post(API, headers={"Authorization": f"Bearer {key}",
                                      "Content-Type": "application/json"},
                       json=body, timeout=timeout)
     r.raise_for_status()
-    text = r.json()["choices"][0]["message"]["content"]
+    result = r.json()
+    if usage is not None:
+        usage.update(result.get("usage") or {})
+    text = result["choices"][0]["message"]["content"]
     m = re.search(r"\[[\d,\s]*\]", text)
     if not m:
         raise ValueError(f"no JSON array in model reply: {text[:200]}")
