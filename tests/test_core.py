@@ -106,11 +106,12 @@ class CoreTests(unittest.TestCase):
         page = Mock()
         browser = Mock(contexts=[Mock(pages=[page])])
         with tempfile.TemporaryDirectory() as out, \
-             patch.object(sys, "argv", ["runner.py", "--cpf", "12345678901", "--out", out]), \
+             patch.object(sys, "argv", ["runner.py", "--cpf", "12345678901", "--out", out,
+                                        "--cdp-url", "http://127.0.0.1:9224"]), \
              patch.dict(os.environ, {"GOVBR_PASSWORD": "test", "OPENROUTER_API_KEY": "test"}), \
              patch.object(runner, "load_dotenv"), \
              patch.object(runner.os, "umask"), \
-             patch.object(runner, "ManagedBrowser"), \
+             patch.object(runner, "ManagedBrowser") as managed_browser, \
              patch.object(runner, "sync_playwright") as playwright, \
              patch.object(runner, "goto_login"), \
              patch.object(runner, "submit_cpf"), \
@@ -127,6 +128,9 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(runner.main(), 2)
         self.assertEqual(solve.call_count, 2)
         self.assertEqual([call.args[2] for call in solve.call_args_list], [0, 0])
+        managed_browser.assert_not_called()
+        playwright.return_value.__enter__.return_value.chromium.connect_over_cdp.assert_called_once_with(
+            "http://127.0.0.1:9224")
         browser.close.assert_called_once()
 
     def test_runner_rejects_unauthorized_follow_up_requests(self):

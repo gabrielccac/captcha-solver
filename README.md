@@ -17,9 +17,24 @@ uv run python runner.py --cpf YOUR_CPF --out runs/customer \
   --model meta/muse-spark-1.3-contributor --reasoning-effort minimal
 ```
 
-The CLI also accepts `--profile-dir`, `--cdp-port`, and `--max-rounds`.
+The CLI also accepts `--profile-dir`, `--cdp-port`, `--cdp-url`, and `--max-rounds`.
 Outputs include a receipt, JSON data, CSV exports, and challenge screenshots.
 The browser profile and outputs contain sensitive session and customer data.
+
+## Docker
+
+```bash
+docker build -t captcha-inss:local .
+uv run python docker_run.py --cpf YOUR_CPF --out runs/customer \
+  --model meta/muse-spark-1.3-contributor --reasoning-effort minimal
+```
+
+On this Linux host, `docker_run.py` starts Chrome/Xvfb with the working host
+profile, then runs the solver and Meu INSS requests in Docker through CDP on
+localhost. Native Chrome inside Docker reached hCaptcha but GOV.BR rejected
+its token; the host-browser CDP flow passed the full extraction. The image
+contains no credentials, browser profile, or customer output. `.env` is passed
+at runtime and `runs/` is bind mounted.
 
 ## Check
 

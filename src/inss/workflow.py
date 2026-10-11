@@ -62,6 +62,7 @@ def main():
     ap.add_argument("--password-env", default="GOVBR_PASSWORD")
     ap.add_argument("--profile-dir", default=None)
     ap.add_argument("--cdp-port", type=int, default=9223)
+    ap.add_argument("--cdp-url", help="connect to an existing Chrome CDP endpoint")
     ap.add_argument("--max-rounds", type=int, default=3)
     args = ap.parse_args()
     os.umask(0o077)
@@ -97,10 +98,14 @@ def main():
         with open(marker) if os.path.exists(marker) else io.StringIO() as fh:
             prof = default_prof if fh.read().strip() == owner else os.path.join(
                 profiles, owner[:16])
-    receipt["profile_dir"] = prof
-    mgr = ManagedBrowser(profile_dir=prof, cdp_port=args.cdp_port)
+    receipt["profile_dir"] = None if args.cdp_url else prof
+    mgr = None
     t0 = time.time()
-    cdp = mgr.start()
+    if args.cdp_url:
+        cdp = args.cdp_url
+    else:
+        mgr = ManagedBrowser(profile_dir=prof, cdp_port=args.cdp_port)
+        cdp = mgr.start()
     receipt["stages"]["browser_s"] = round(time.time() - t0, 1)
     log("browser ready")
     try:
@@ -247,7 +252,8 @@ def main():
             finally:
                 b.close()
     finally:
-        mgr.stop()
+        if mgr is not None:
+            mgr.stop()
     receipt["total_s"] = round(time.time() - t_all, 1)
     receipt["model_cost_usd"] = round(sum(
         (r.get("model_usage") or {}).get("cost", 0) or 0
