@@ -1,13 +1,19 @@
 """Gov.br session leg: authorize -> CPF submit -> password submit -> token harvest.
 Pure CDP-page automation (caller owns browser/page). No secrets on disk.
 """
+import base64
+import json
 import random
 import re
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import requests
+
+from inss.concession import parse_concession_pdf
 
 AUTHZ = ("https://sso.acesso.gov.br/authorize?response_type=code"
          "&client_id=autorizar.meu.inss.gov.br"
@@ -19,19 +25,41 @@ AUTHZ = ("https://sso.acesso.gov.br/authorize?response_type=code"
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/146.0.0.0 Safari/537.36")
 API = "https://vip-pmeuinss-api.inss.gov.br/apis"
-WINDOWS = [("01-09-2026", "31-10-2026"), ("01-12-2025", "31-10-2026"),
-           ("01-11-2025", "31-10-2026"), ("01-11-2024", "31-10-2025"),
-           ("01-11-2023", "31-10-2024")]
 
 
-def credit_windows(today=None):
-    windows = list(WINDOWS)
-    start = date(2026, 11, 1)
+def token_claims(token):
+    """Read claims from the current session; this does not verify a JWT signature."""
+    payload = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+
+
+def token_validity(auth, mi, now=None):
+    now = int(time.time()) if now is None else now
+    result = {"checked_at": datetime.fromtimestamp(now, timezone.utc).isoformat()}
+    for name, token in (("authorization", auth), ("mi_token", mi)):
+        claims = token_claims(token)
+        issued, expires = claims.get("iat"), claims.get("exp")
+        result[name] = {
+            "issued_at": datetime.fromtimestamp(issued, timezone.utc).isoformat() if issued else None,
+            "expires_at": datetime.fromtimestamp(expires, timezone.utc).isoformat() if expires else None,
+            "declared_lifetime_seconds": expires - issued if expires and issued else None,
+            "remaining_seconds": max(0, expires - now) if expires else None,
+        }
+    remaining = [v["remaining_seconds"] for v in (result["authorization"], result["mi_token"])]
+    result["session_remaining_seconds"] = min(remaining) if None not in remaining else None
+    return result
+
+
+def credit_windows(today=None, years=5):
     today = today or date.today()
-    while start <= today:
-        end = start.replace(year=start.year + 1) - timedelta(days=1)
+    windows = []
+    for offset in range(years):
+        month = date(today.year - offset, today.month, 1)
+        next_month = (date(month.year + 1, 1, 1) if month.month == 12 else
+                      date(month.year, month.month + 1, 1))
+        start = date(next_month.year - 1, next_month.month, 1)
+        end = today if offset == 0 else next_month - timedelta(days=1)
         windows.append((start.strftime("%d-%m-%Y"), end.strftime("%d-%m-%Y")))
-        start = end + timedelta(days=1)
     return windows
 
 
@@ -79,7 +107,7 @@ def submit_cpf(page, cpf_masked):
     page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
 
 
-def submit_password(page, password):
+def submit_password(page, password, landing_host="meu.inss.gov.br"):
     human_type(page, 'input[type="password"]', password)
     page.wait_for_timeout(random.randint(600, 1200))
     btn = page.locator('button:has-text("Continuar"), button[type="submit"]').first
@@ -88,7 +116,7 @@ def submit_password(page, password):
     page.wait_for_timeout(random.randint(400, 900))
     page.mouse.click(bx["x"] + bx["width"] / 2, bx["y"] + bx["height"] / 2)
     # poll: app landing (URL leaves sso) instead of fixed 12s
-    wait_for(page, "window.location.href.includes('meu.inss.gov.br')", timeout_s=30,
+    wait_for(page, f"window.location.href.includes('{landing_host}')", timeout_s=30,
              desc="app landing")
 
 
@@ -120,6 +148,46 @@ def api_session(auth, mi):
     s.headers.update({"User-Agent": UA, "Accept": "application/json",
                       "Referer": "https://meu.inss.gov.br/"})
     return s, {"Authorization": "Bearer " + auth, "mitoken": mi}
+
+
+def concession_letters(auth, mi, output_dir):
+    benefits = token_claims(mi).get("nbs", [])
+    if not isinstance(benefits, list) or any(not re.fullmatch(r"[0-9]{1,15}", str(nb)) for nb in benefits):
+        raise ValueError("Invalid benefit numbers in session")
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with api_session(auth, mi)[0] as session:
+        headers = dict(session.headers, Authorization="Bearer " + auth, mitoken=mi)
+
+    def download(nb):
+        result = {"benefit_number": nb, "http_status": None, "file": None}
+        started = time.monotonic()
+        try:
+            response = requests.get(f"{API}/calculoBeneficioServices/concalPdf/{nb}",
+                                    headers=headers, timeout=30, allow_redirects=False)
+            result["http_status"] = response.status_code
+            if response.status_code != 200:
+                result["error"] = "Carta unavailable" if response.status_code == 404 else "Carta request failed"
+            elif not response.content.startswith(b"%PDF-"):
+                result["error"] = "Response is not a PDF"
+            else:
+                filename = f"carta-concessao-{nb}.pdf"
+                path = output_dir / filename
+                with path.open("wb") as fh:
+                    path.chmod(0o600)
+                    fh.write(response.content)
+                result.update(file=filename, size_bytes=len(response.content))
+                try:
+                    result["parsed"] = parse_concession_pdf(path)
+                except (OSError, subprocess.SubprocessError):
+                    result["parse_error"] = "PDF text extraction failed; check pdftotext installation"
+        except requests.RequestException:
+            result["error"] = "Carta request timed out or could not connect"
+        result["elapsed_s"] = round(time.monotonic() - started, 1)
+        return result
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        return list(pool.map(download, dict.fromkeys(map(str, benefits))))
 
 
 def extract(cpf_full, auth, mi, windows=None):

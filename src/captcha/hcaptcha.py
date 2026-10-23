@@ -98,7 +98,7 @@ def grid_difference(before, after, grid):
 def tiles_ready(crop, grid):
     # Loading placeholders are near-white and nearly uniform.
     stats = (ImageStat.Stat(tile.convert("RGB")) for tile in split_tiles(crop, grid))
-    return all(not (min(stat.mean) > 240 and max(stat.stddev) < 9)
+    return all(not (min(stat.mean) > 240 and max(stat.stddev) < 2)
                for stat in stats)
 
 

@@ -6,10 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "captcha-inss-workflow"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["playwright", "Pillow", "requests"]
+dependencies = [
+    "playwright",
+    "Pillow",
+    "requests",
+    "mcp>=2,<3",
+]
 
 [project.scripts]
 inss-extract = "inss.workflow:main"
+comprasnet-login = "comprasnet.workflow:main"
+inss-mcp = "inss.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,4 +1,5 @@
 import os
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, mock_open, patch
@@ -7,6 +8,27 @@ from captcha.browser import ManagedBrowser
 
 
 class BrowserTests(unittest.TestCase):
+    def test_stop_waits_for_chrome_before_stopping_display(self):
+        events = []
+        chrome, xvfb = Mock(), Mock()
+        chrome.terminate.side_effect = lambda: events.append("chrome terminate")
+        chrome.wait.side_effect = lambda **kw: events.append("chrome exited")
+        xvfb.terminate.side_effect = lambda: events.append("display terminate")
+        browser = ManagedBrowser("unused")
+        browser.procs = [xvfb, chrome]
+        browser.stop()
+        self.assertEqual(events, ["chrome terminate", "chrome exited", "display terminate"])
+        self.assertEqual(browser.procs, [])
+
+    def test_stop_kills_process_that_does_not_exit(self):
+        process = Mock()
+        process.wait.side_effect = [subprocess.TimeoutExpired("chrome", 5), 0]
+        browser = ManagedBrowser("unused")
+        browser.procs = [process]
+        browser.stop()
+        process.kill.assert_called_once()
+        self.assertEqual(process.wait.call_count, 2)
+
     def test_wayland_session_is_not_inherited_by_chrome(self):
         xvfb = Mock()
         xvfb.poll.return_value = None

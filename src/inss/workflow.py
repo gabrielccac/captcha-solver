@@ -15,7 +15,8 @@ from playwright.sync_api import sync_playwright
 
 from captcha.browser import ManagedBrowser
 from captcha.hcaptcha import page_state, solve_round, vis_modal
-from inss.session import extract, goto_login, harvest_tokens, submit_cpf, submit_password
+from inss.session import (concession_letters, extract, goto_login, harvest_tokens,
+                          submit_cpf, submit_password, token_validity)
 
 faulthandler.enable()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -226,6 +227,9 @@ def main():
                         for w in data["windows"]]
                     print(json.dumps(receipt, indent=1))
                     return 4
+                data["concession_letters"] = concession_letters(toks["auth"], toks["mi"], args.out)
+                data["token_validity"] = token_validity(toks["auth"], toks["mi"])
+                receipt["stages"]["extract_s"] = round(time.time() - t0, 1)
                 base = os.path.join(args.out, f"extratos-{cpf_digits}")
                 json.dump(data, open(base + ".json", "w"), indent=1, ensure_ascii=False)
                 scalars = ["idCredito", "dtCompetenciaCredito", "nb", "dtInicioPeriodo",
@@ -247,6 +251,10 @@ def main():
                                         (r_.get("rubricaTO") or {}).get("nome")])
                 receipt["files"] = [base + ".json", base + "-creditos.csv",
                                     base + "-rubricas.csv"]
+                receipt["files"].extend(os.path.join(args.out, c["file"])
+                                        for c in data["concession_letters"] if c["file"])
+                receipt["concession_letters"] = data["concession_letters"]
+                receipt["token_validity"] = data["token_validity"]
                 receipt["windows"] = data["windows"]
                 receipt["n_credits"] = data["n_unique_credits"]
             finally:

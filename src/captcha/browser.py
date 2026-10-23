@@ -82,6 +82,11 @@ class ManagedBrowser:
         for pr in reversed(self.procs):
             try:
                 pr.terminate()
+                try:
+                    pr.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pr.kill()
+                    pr.wait(timeout=5)
             except Exception:
                 pass
         self.procs = []

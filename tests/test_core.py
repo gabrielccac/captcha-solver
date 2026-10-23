@@ -29,12 +29,30 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(connect.call_count, 2)
         page.wait_for_timeout.assert_called_once_with(1000)
 
-    def test_credit_windows_extend_without_changing_old_ranges(self):
-        self.assertEqual(session.credit_windows(date(2026, 10, 11)), session.WINDOWS)
-        self.assertEqual(session.credit_windows(date(2027, 11, 1))[-2:], [
-            ("01-11-2026", "31-10-2027"),
-            ("01-11-2027", "31-10-2028"),
+    def test_credit_windows_cover_five_years_without_overlap(self):
+        self.assertEqual(session.credit_windows(date(2026, 10, 12)), [
+            ("01-11-2025", "12-10-2026"),
+            ("01-11-2024", "31-10-2025"),
+            ("01-11-2023", "31-10-2024"),
+            ("01-11-2022", "31-10-2023"),
+            ("01-11-2021", "31-10-2022"),
         ])
+        self.assertEqual(session.credit_windows(date(2024, 2, 29), years=2), [
+            ("01-03-2023", "29-02-2024"),
+            ("01-03-2022", "28-02-2023"),
+        ])
+        self.assertEqual(session.credit_windows(date(2027, 1, 1), years=1),
+                         [("01-02-2026", "01-01-2027")])
+
+    def test_pale_loaded_tiles_are_not_loading_placeholders(self):
+        crop = Image.new("RGB", (300, 300), "white")
+        grid = (0, 0, 300, 300)
+        self.assertFalse(hcaptcha.tiles_ready(crop, grid))
+        for row in range(3):
+            for col in range(3):
+                crop.paste((200, 200, 200), (col * 100, row * 100 + 50,
+                                           (col + 1) * 100, row * 100 + 51))
+        self.assertTrue(hcaptcha.tiles_ready(crop, grid))
 
     def test_grid_difference_detects_a_new_grid(self):
         old = Image.new("RGB", (30, 30), "black")
