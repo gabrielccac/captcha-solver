@@ -176,3 +176,7 @@ After changes to browser, captcha, login, or API code, run the full CLI flow
 with the local credentials. A valid run completes both captcha phases when
 present, submits the password, receives HTTP 200 for customer info, and checks
 the credit-window statuses and returned records against the known baseline.
+
+### Experimento Android sem solver
+
+O teste isolado de login nativo com CDP está em [experiments/android_cdp](experiments/android_cdp/README.md). Ele não altera o fluxo padrão e interrompe diante de captcha visual ou verificação em duas etapas.
