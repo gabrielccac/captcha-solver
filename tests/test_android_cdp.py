@@ -3,6 +3,17 @@ import unittest
 from unittest.mock import Mock
 
 
+class GoogleReadinessTests(unittest.TestCase):
+    def test_all_required_providers_need_a_published_binder(self):
+        from experiments.android_cdp.android import google_providers_ready
+        dump = ""
+        for name in ("AccountContentProvider", "com.google.android.gms.phenotype", "com.google.android.chimera"):
+            dump += "\n  * ContentProviderRecord{u0 " + name + "}\n    uid=10145 provider=android.content.ContentProviderProxy@abc\n    authority=" + name + "\n"
+        self.assertTrue(google_providers_ready(dump))
+        self.assertFalse(google_providers_ready(dump.replace("provider=android.content.ContentProviderProxy@abc", "provider=null", 1)))
+        self.assertFalse(google_providers_ready("Launching content providers: " + dump.replace(" provider=android.content.ContentProviderProxy@abc", "")))
+
+
 @unittest.skipUnless(importlib.util.find_spec("mycdp") and importlib.util.find_spec("websocket"), "optional Android CDP dependencies")
 class AndroidLoginTests(unittest.TestCase):
     def test_authenticated_domain_requires_exact_host_and_session_tokens(self):

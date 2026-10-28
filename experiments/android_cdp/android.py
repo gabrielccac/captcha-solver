@@ -14,6 +14,41 @@ def adb(*args, check=True):
     return result.stdout.strip()
 
 
+def google_providers_ready(dump):
+    ready = set()
+    for record in re.split(r"\n\s*\* ContentProviderRecord", dump):
+        if not re.search(r"\bprovider=(?!null\b)\S+", record):
+            continue
+        for name in ("AccountContentProvider", "com.google.android.gms.phenotype", "com.google.android.chimera"):
+            if name in record:
+                ready.add(name)
+    return len(ready) == 3
+
+
+def wait_for_google_providers(out):
+    # boot_completed does not mean GMS has published the providers Chrome needs.
+    start = time.monotonic()
+    stable_pid = None
+    samples = 0
+    while time.monotonic() - start < 180:
+        dump = adb("shell", "dumpsys", "activity", "-a", "providers", "com.google.android.gms")
+        pid = adb("shell", "pidof", "com.google.android.gms.persistent", check=False)
+        if pid and google_providers_ready(dump):
+            samples = samples + 1 if pid == stable_pid else 1
+            stable_pid = pid
+            if samples >= 3:
+                result = {"google_providers_ready": True, "stable_samples": samples,
+                          "elapsed_s": round(time.monotonic() - start, 2)}
+                (out / "google-services.json").write_text(json.dumps(result, indent=2) + "\n")
+                print(json.dumps(result), flush=True)
+                return
+        else:
+            stable_pid, samples = None, 0
+        time.sleep(3)
+    (out / "google-services-failure.txt").write_text(dump)
+    raise TimeoutError("Google providers not published stably before Chrome launch")
+
+
 def main():
     out = Path("runs/android-cdp-login")
     out.mkdir(parents=True, exist_ok=False)
@@ -26,6 +61,7 @@ def main():
     adb("wait-for-device")
     adb("shell", "settings", "put", "global", "auto_time_zone", "0")
     adb("shell", "setprop", "persist.sys.timezone", "America/Sao_Paulo")
+    wait_for_google_providers(out)
     try:
         for case in ("smoke", "login"):
             assert adb("shell", "pm", "clear", "com.android.chrome") == "Success"
