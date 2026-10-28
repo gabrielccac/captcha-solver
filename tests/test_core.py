@@ -16,7 +16,7 @@ from inss import workflow as runner
 
 class CoreTests(unittest.TestCase):
     def test_harvest_waits_for_usable_tokens(self):
-        page = Mock()
+        page = Mock(url="https://meu.inss.gov.br/")
         page.evaluate.side_effect = [
             {"auth": "expired", "mi": "old"},
             {"auth": "fresh", "mi": "new"},

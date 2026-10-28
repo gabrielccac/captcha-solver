@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -15,8 +16,9 @@ from playwright.sync_api import sync_playwright
 
 from captcha.browser import ManagedBrowser
 from captcha.hcaptcha import page_state, solve_round, vis_modal
-from inss.session import (concession_letters, extract, goto_login, harvest_tokens,
-                          submit_cpf, submit_password, token_validity)
+from inss.medical import download_medical_report, list_medical_reports
+from inss.session import (LoginError, concession_letters, extract, goto_login, harvest_tokens,
+                          session_benefits, submit_cpf, submit_password, token_validity)
 
 faulthandler.enable()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -65,7 +67,10 @@ def main():
     ap.add_argument("--cdp-port", type=int, default=9223)
     ap.add_argument("--cdp-url", help="connect to an existing Chrome CDP endpoint")
     ap.add_argument("--max-rounds", type=int, default=3)
+    ap.add_argument("--medical-report-nb", help="download the medical report for a listed NB")
     args = ap.parse_args()
+    if args.medical_report_nb and not re.fullmatch(r"[0-9]{1,15}", args.medical_report_nb):
+        ap.error("--medical-report-nb must contain 1 to 15 digits")
     os.umask(0o077)
     load_dotenv()
     t_all = time.time()
@@ -199,17 +204,24 @@ def main():
                         "() => !!document.querySelector('input[type=\"password\"]')")
                 except Exception:
                     has_pwd = False
-                if has_pwd:
-                    submit_password(page, password)
-                    log("password submitted")
-                else:
-                    log("no password field (already past it)")
-                    app = find_page(b, "meu.inss")
-                    if app is not None:
-                        page = app
-                page.screenshot(path=os.path.join(args.out, "after-pass.png"))
-                receipt["stages"]["password_s"] = round(time.time() - t0, 1)
-                toks = harvest_tokens(page, cpf_digits)
+                try:
+                    if has_pwd:
+                        submit_password(page, password)
+                        log("password submitted")
+                    else:
+                        log("no password field (already past it)")
+                        app = find_page(b, "meu.inss")
+                        if app is not None:
+                            page = app
+                    page.screenshot(path=os.path.join(args.out, "after-pass.png"))
+                    receipt["stages"]["password_s"] = round(time.time() - t0, 1)
+                    toks = harvest_tokens(page, cpf_digits)
+                except LoginError as error:
+                    receipt.update(fatal=str(error), error_code=error.code,
+                                   login_evidence=error.evidence)
+                    json.dump(receipt, open(os.path.join(args.out, "receipt.json"), "w"), indent=1)
+                    print(json.dumps(receipt, indent=1))
+                    return 3
                 if not (toks["auth"] and toks["mi"]):
                     receipt["fatal"] = "no valid tokens after login"
                     print(json.dumps(receipt, indent=1))
@@ -228,6 +240,23 @@ def main():
                     print(json.dumps(receipt, indent=1))
                     return 4
                 data["concession_letters"] = concession_letters(toks["auth"], toks["mi"], args.out)
+                try:
+                    data["benefits"] = session_benefits(toks["mi"])
+                    data["medical_reports"] = list_medical_reports(toks["mi"])
+                except ValueError:
+                    data["benefits"] = []
+                    data["benefits_error"] = "Session benefit list unavailable"
+                    data["medical_reports"] = []
+                    data["medical_reports_error"] = "Medical report benefit list unavailable"
+                if args.medical_report_nb:
+                    try:
+                        data["medical_report"] = download_medical_report(
+                            toks["auth"], toks["mi"], args.medical_report_nb, args.out)
+                    except ValueError:
+                        data["medical_report"] = {
+                            "benefit_number": args.medical_report_nb, "http_status": None,
+                            "file": None, "error": "Benefit not listed for medical reports in this session",
+                        }
                 data["token_validity"] = token_validity(toks["auth"], toks["mi"])
                 receipt["stages"]["extract_s"] = round(time.time() - t0, 1)
                 base = os.path.join(args.out, f"extratos-{cpf_digits}")
@@ -253,6 +282,16 @@ def main():
                                     base + "-rubricas.csv"]
                 receipt["files"].extend(os.path.join(args.out, c["file"])
                                         for c in data["concession_letters"] if c["file"])
+                receipt["benefits"] = data["benefits"]
+                if "benefits_error" in data:
+                    receipt["benefits_error"] = data["benefits_error"]
+                receipt["medical_reports"] = data["medical_reports"]
+                if "medical_reports_error" in data:
+                    receipt["medical_reports_error"] = data["medical_reports_error"]
+                if "medical_report" in data:
+                    receipt["medical_report"] = data["medical_report"]
+                    if data["medical_report"]["file"]:
+                        receipt["files"].append(os.path.join(args.out, data["medical_report"]["file"]))
                 receipt["concession_letters"] = data["concession_letters"]
                 receipt["token_validity"] = data["token_validity"]
                 receipt["windows"] = data["windows"]

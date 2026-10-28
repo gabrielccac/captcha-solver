@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 
 from captcha.browser import ManagedBrowser
 from captcha.hcaptcha import page_state, solve_round, vis_modal
-from inss.session import submit_cpf, submit_password
+from inss.session import LoginError, submit_cpf, submit_password
 from inss.workflow import find_page, load_dotenv, log
 
 START_URL = "https://www.comprasnet.gov.br/seguro/loginPortalFornecedor.asp"
@@ -94,7 +94,14 @@ def main():
                     page = find_page(chrome, "sso.acesso") or page
                     if not page_state(page, PASSWORD_SELECTOR).get("done"):
                         raise RuntimeError("captcha did not reach password stage")
-                    submit_password(page, password, LANDING_HOST)
+                    try:
+                        submit_password(page, password, LANDING_HOST)
+                    except LoginError as error:
+                        receipt.update(fatal=str(error), error_code=error.code,
+                                       login_evidence=error.evidence)
+                        (out / "receipt.json").write_text(json.dumps(receipt, indent=1))
+                        print(json.dumps(receipt, indent=1))
+                        return 3
                     app = find_page(chrome, LANDING_HOST) or page
                     if not in_comprasnet(app):
                         app.wait_for_url("**/intro.htm*", timeout=30000)

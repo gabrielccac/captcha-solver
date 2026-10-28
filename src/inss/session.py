@@ -10,8 +10,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
+from playwright.sync_api import Error as PlaywrightError
 
 from inss.concession import parse_concession_pdf
 
@@ -25,12 +27,79 @@ AUTHZ = ("https://sso.acesso.gov.br/authorize?response_type=code"
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
       "Chrome/146.0.0.0 Safari/537.36")
 API = "https://vip-pmeuinss-api.inss.gov.br/apis"
+LOGIN_ERRORS = {
+    "invalid_credentials": "GOV.BR rejected the CPF or password",
+    "two_factor_required": "GOV.BR requires a two-step verification code",
+}
+
+
+class LoginError(RuntimeError):
+    def __init__(self, code, evidence):
+        super().__init__(LOGIN_ERRORS[code])
+        self.code = code
+        self.evidence = evidence
+
+
+def login_failure(page):
+    if urlsplit(page.url).hostname != "sso.acesso.gov.br":
+        return None
+    try:
+        for message in page.locator(".br-message:visible").all_inner_texts():
+            if (re.search(r"\bERL0003900\b", message)
+                    or "usuário e/ou senha inválidos" in message.casefold()):
+                provider_code = re.search(r"\bERL[0-9]+\b", message)
+                return LoginError("invalid_credentials", {
+                    "source": "visible_govbr_message", "selector": ".br-message",
+                    "provider_error_code": provider_code[0] if provider_code else None,
+                    "message": message.strip(),
+                })
+        heading = "Confirme sua identidade com a Verificação em duas etapas"
+        if (page.locator('input#otpInput[name="otpInput"]:visible').first.is_visible()
+                and page.get_by_role("heading", name=heading, exact=True).first.is_visible()):
+            return LoginError("two_factor_required", {
+                "source": "visible_govbr_otp_challenge", "heading": heading,
+                "selector": 'input#otpInput[name="otpInput"]',
+            })
+    except PlaywrightError:
+        # Navigation can replace the document while it is being inspected.
+        return None
+    return None
 
 
 def token_claims(token):
     """Read claims from the current session; this does not verify a JWT signature."""
     payload = token.split(".")[1]
     return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+
+
+def session_benefits(mi):
+    claims = token_claims(mi)
+    benefits = claims.get("nbsJson")
+    if isinstance(benefits, str):
+        benefits = json.loads(benefits)
+    if not isinstance(benefits, dict) or not isinstance(benefits.get("listaBeneficios"), list):
+        raise ValueError("Session benefit list unavailable")
+    allowed = claims.get("nbs", [])
+    if not isinstance(allowed, list):
+        raise ValueError("Invalid session benefit list")
+    allowed = set(map(str, allowed))
+    result = {}
+    for benefit in benefits["listaBeneficios"]:
+        if not isinstance(benefit, dict):
+            raise ValueError("Invalid session benefit")
+        nb = str(benefit.get("numero", ""))
+        if not re.fullmatch(r"[0-9]{1,15}", nb) or nb not in allowed:
+            raise ValueError("Benefit outside current session")
+        result[nb] = {
+            "benefit_number": nb,
+            "benefit_name": benefit.get("descricaoEspecie") or benefit.get("especie"),
+            "benefit_type_code": benefit.get("codigoEspecie"),
+            "benefit_status": benefit.get("situacao"),
+            "benefit_start_date": benefit.get("dataInicioBeneficio"),
+            "decision_date": benefit.get("dataDespachoBeneficio"),
+            "denial_date": benefit.get("dataProcessoIndeferimento"),
+        }
+    return list(result.values())
 
 
 def token_validity(auth, mi, now=None):
@@ -115,14 +184,31 @@ def submit_password(page, password, landing_host="meu.inss.gov.br"):
     page.mouse.move(bx["x"] + bx["width"] / 2, bx["y"] + bx["height"] / 2, steps=30)
     page.wait_for_timeout(random.randint(400, 900))
     page.mouse.click(bx["x"] + bx["width"] / 2, bx["y"] + bx["height"] / 2)
-    # poll: app landing (URL leaves sso) instead of fixed 12s
-    wait_for(page, f"window.location.href.includes('{landing_host}')", timeout_s=30,
-             desc="app landing")
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        host = urlsplit(page.url).hostname
+        if host == landing_host:
+            return
+        failure = login_failure(page)
+        if failure:
+            raise failure
+        if (landing_host == "meu.inss.gov.br" and host == "sso.acesso.gov.br"
+                and page.get_by_text("Serviço: Meu INSS - Site", exact=True).is_visible()):
+            authorize = page.get_by_role("button", name="Autorizar", exact=True)
+            if authorize.is_visible():
+                authorize.click(timeout=10000)
+                page.wait_for_url(lambda url: urlsplit(url).hostname == landing_host,
+                                  timeout=30000)
+                return
+        page.wait_for_timeout(500)
 
 
 def harvest_tokens(page, cpf_full, timeout_s=20):
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
+        failure = login_failure(page)
+        if failure:
+            raise failure
         try:
             vals = page.evaluate("() => ({auth: localStorage.getItem('ifs_auth'),"
                                  " mi: localStorage.getItem('miToken')})")

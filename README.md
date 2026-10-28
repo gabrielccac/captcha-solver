@@ -20,6 +20,9 @@ uv run python runner.py --cpf YOUR_CPF --out runs/customer \
 ```
 
 The CLI also accepts `--profile-dir`, `--cdp-port`, `--cdp-url`, and `--max-rounds`.
+If GOV.BR requests consent for `Meu INSS - Site`, the workflow clicks **Autorizar**
+by default, granting the personal-data sharing shown on that screen. It then
+waits for the Meu INSS domain before collecting tokens and querying the APIs.
 Outputs include a receipt, JSON credit and benefit data, CSV exports, and
 challenge screenshots.
 The browser profile and outputs contain sensitive session and customer data.
@@ -47,6 +50,29 @@ login subprocess for that call and is not added to `.env`, command arguments,
 or the tool result. The server uses a fresh temporary browser profile and
 removes the raw extraction files after producing the payment summary.
 
+`benefits` lists every benefit in the current session, including benefits without
+medical-report eligibility. Each payment includes `benefit_number`, so callers
+can group credit records by NB. A listed benefit may have no credits in the
+requested five-year period; listing is not a promise of payment records.
+
+The login checks visible GOV.BR evidence after password submission and during
+token collection. A known failure returns `error_code`, `error` and
+`login_evidence` from the MCP, without payment data. CLI failures exit with code
+3 and save the same diagnostic in `receipt.json`:
+
+- `invalid_credentials`: captured GOV.BR message “Usuário e/ou senha inválidos.”
+  and/or provider code `ERL0003900`. GOV.BR does not distinguish a wrong CPF from
+  a wrong password in this message.
+- `two_factor_required`: the captured second-factor heading plus a visible
+  `input#otpInput[name="otpInput"]`. The workflow stops for the access code;
+  it does not submit a code or change remembered-device settings.
+
+Unknown messages and timeouts are not classified as either case. The detectors
+are based on real screens captured on 2026-10-27, with credential-free
+reconstructions under `tests/fixtures/govbr-*.html`. See
+[GOV.BR's description of two-step verification](https://acesso.gov.br/faq/_perguntasdafaq/oqueautenticacao2fatores.html)
+for the password-then-app-code flow.
+
 Each call also downloads the **carta de concessao** PDF for each benefit listed
 in the customer's current session. CLI PDFs are saved in `--out`; MCP PDFs are
 kept under `runs/mcp/inss-*/` and returned as `concession_letters[].file_path`.
@@ -54,6 +80,26 @@ These private local files remain after the call, so the desktop client can open
 them. Delete the corresponding run directory when the documents are no longer
 needed. Failed or unavailable letters include their HTTP status and an error;
 they do not discard the payment results.
+
+Each CLI/MCP result includes `medical_reports`: the benefits offered by the
+logged-in site's **Laudo Médico e Avaliação Social** page. This list comes from
+`miToken.nbsJson.listaBeneficios`, filtered to the same benefit types as the site;
+there is no separate listing request. It includes the NB, benefit name/type,
+status and source benefit/decision dates. These dates are not examination dates.
+`availability: "not_checked"` means the PDF has not been requested: an entry can
+still return HTTP 404. Listing does not download medical reports.
+
+To download a chosen report, call `get_inss_payments(cpf, password,
+medical_report_nb="NB_FROM_LIST")`, or add `--medical-report-nb NB_FROM_LIST` to
+the CLI command. This uses `GET /apis/laudomedicoservices/pdf/{NB}` with both
+session tokens, and rejects NBs outside the session's medical-report list.
+`medical_report` returns the HTTP status and `file_path` (MCP) or `file` (CLI),
+or an error without discarding payments. PDFs are validated by their `%PDF-`
+signature because this endpoint can return a PDF labelled `application/json`.
+MCP medical PDFs remain private under `runs/mcp/inss-*/`, like concession letters.
+Each MCP call performs a fresh login and the existing extraction; tokens are
+not cached between listing and choosing a report. Social evaluations are not
+downloaded by this option.
 
 `concession_letters[].parsed` contains labelled customer/benefit fields, initial
 monthly amount (an exact decimal string in BRL), dates, bank details and credit
