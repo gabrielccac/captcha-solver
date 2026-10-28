@@ -35,3 +35,31 @@ este experimento utiliza apenas as duas dependências de CDP acima.
 
 Isso testa a aceitação do login nesse ambiente; não presume que o resultado
 da Receita se repita no GOV.BR, em todos os IPs ou contas.
+
+## Resultado local em Docker
+
+[Relatório sem dados pessoais](results/docker-local.json), fonte testada
+`6fe3164d8273272069c967c8e0e39ac8e81c86b5`: login autenticado com HTTP 200,
+um envio de CPF, um envio de senha, nenhum captcha visual detectado e nenhum
+solver. O teste de login levou 99,79 segundos; boot do Android 67,20 segundos
+e espera adicional pelos provedores Google 33,57 segundos. A checagem
+sintética de CDP passou antes do portal. Container, AVD e arquivo temporário
+de credenciais foram removidos. Não foram extraídos dados da conta.
+
+Antes desse login, duas pré-checagens encerraram sem acessar o GOV.BR.
+A segunda registrou `ApplicationExitInfo reason=12 (DEPENDENCY DIED)`: o
+Android matou o Chrome porque `com.google.android.gms.persistent` excedeu o
+prazo de publicação dos content providers. A memória disponível no Android
+era aproximadamente 1,8 GB. A preparação passou a aguardar os provedores
+AccountContentProvider, Phenotype e Chimera publicados, com três amostras
+estáveis do PID do GMS e limite de 180 segundos, antes de iniciar o Chrome.
+Essa execução passou após a correção. O transporte CDP não precisou mudar.
+
+A dependência entre morte de providers e encerramento de seus clientes
+é definida no [ContentProviderHelper do Android](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/services/core/java/com/android/server/am/ContentProviderHelper.java).
+Os logs completos de diagnóstico ficaram apenas na pasta local ignorada.
+
+Isso valida uma execução real deste login nesse ambiente. Não comprova
+consistência entre contas, IPs ou novas execuções e não remove o solver do
+fluxo de produção. A checagem de prontidão recebeu depois um teste adicional
+para não confundir o índice de authorities com um provider publicado.

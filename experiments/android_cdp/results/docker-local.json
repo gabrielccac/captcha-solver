@@ -1,0 +1,80 @@
+{
+  "tested_source_commit": "6fe3164d8273272069c967c8e0e39ac8e81c86b5",
+  "environment": "Local Docker, native Android, KVM",
+  "image_id": "sha256:c4306caec994bd5bf88716fb9a5c7ccb0d9d351df6481630e1d630431beb4e23",
+  "runtime": {
+    "stage": "complete",
+    "status": "success",
+    "docker": true,
+    "python": "3.12.15",
+    "emulator": "Android emulator version 37.2.12.0 (build_id 16428233) (CL:N/A)",
+    "kvm_usable": true,
+    "boot_s": 67.2,
+    "probe_exit_code": 0
+  },
+  "android": {
+    "android_api": "36",
+    "emulator": true,
+    "chrome": "133.0.6943.137"
+  },
+  "readiness": {
+    "google_providers_ready": true,
+    "stable_samples": 3,
+    "elapsed_s": 33.57
+  },
+  "preflight": {
+    "status": "success",
+    "browser": "Chrome/133.0.6943.137",
+    "android": true,
+    "typed_value_matches": true,
+    "native_cdp_tap": true,
+    "network_http": 200,
+    "response_body_matches": true,
+    "async_evaluation": true
+  },
+  "login": {
+    "status": "success",
+    "stage": "verify_authenticated_session",
+    "solver_enabled": false,
+    "password_submissions": 1,
+    "cpf_submissions": 1,
+    "visual_captcha_seen": false,
+    "authentication_verified": true,
+    "personal_data_extracted": false,
+    "browser": "Chrome/133.0.6943.137",
+    "last_state": {
+      "host": "meu.inss.gov.br",
+      "https": true,
+      "ready": "interactive",
+      "account_field": false,
+      "password_field": false,
+      "visual_captcha": false,
+      "invalid_credentials": false,
+      "provider_codes": [],
+      "two_factor": false,
+      "consent_meu_inss": false,
+      "session_tokens_present": true,
+      "rejected": false
+    },
+    "authenticated_probe_http": 200,
+    "elapsed_s": 99.79,
+    "cdp_commands": {
+      "Browser.getVersion": 1,
+      "Page.enable": 1,
+      "Page.navigate": 1,
+      "Runtime.evaluate": 102,
+      "Input.dispatchKeyEvent": 23,
+      "Input.synthesizeTapGesture": 2
+    }
+  },
+  "cleanup": {
+    "container_removed": true,
+    "avd_removed": true,
+    "temporary_credentials_removed": true
+  },
+  "limitations": [
+    "One authenticated login; no repeatability claim",
+    "No benefits, payments or medical documents extracted",
+    "Production login remains unchanged"
+  ]
+}

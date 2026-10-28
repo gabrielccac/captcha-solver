@@ -19,8 +19,11 @@ def google_providers_ready(dump):
     for record in re.split(r"\n\s*\* ContentProviderRecord", dump):
         if not re.search(r"\bprovider=(?!null\b)\S+", record):
             continue
+        component = record.splitlines()[0]
+        authority = re.search(r"(?m)^\s*authority=(.+)$", record)
+        authorities = authority.group(1).strip().split(";") if authority else []
         for name in ("AccountContentProvider", "com.google.android.gms.phenotype", "com.google.android.chimera"):
-            if name in record:
+            if (name == "AccountContentProvider" and name in component) or name in authorities:
                 ready.add(name)
     return len(ready) == 3
 

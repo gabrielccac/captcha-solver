@@ -12,6 +12,7 @@ class GoogleReadinessTests(unittest.TestCase):
         self.assertTrue(google_providers_ready(dump))
         self.assertFalse(google_providers_ready(dump.replace("provider=android.content.ContentProviderProxy@abc", "provider=null", 1)))
         self.assertFalse(google_providers_ready("Launching content providers: " + dump.replace(" provider=android.content.ContentProviderProxy@abc", "")))
+        self.assertFalse(google_providers_ready("\n  * ContentProviderRecord{u0 Other}\n    provider=Proxy@abc\n    authority=other\n\n  User 0 authority to provider mappings:\n    AccountContentProvider com.google.android.gms.phenotype com.google.android.chimera"))
 
 
 @unittest.skipUnless(importlib.util.find_spec("mycdp") and importlib.util.find_spec("websocket"), "optional Android CDP dependencies")
