@@ -49,6 +49,21 @@ def main():
             if case == "smoke":
                 command += ["--page-host", "10.0.2.2", "--require-android"]
             result = subprocess.run(command, timeout=180)
+            if case == "smoke" and result.returncode:
+                # No credentials have been used at this gate; preserve crash evidence.
+                diagnostics = {}
+                for key, args in {
+                    "chrome_exit_info": ("shell", "dumpsys", "activity", "exit-info", "com.android.chrome"),
+                    "chrome_process": ("shell", "pidof", "com.android.chrome"),
+                    "guest_memory": ("shell", "cat", "/proc/meminfo"),
+                    "crash_log": ("logcat", "-b", "crash", "-d", "-t", "200"),
+                    "system_log": ("logcat", "-b", "system", "-d", "-t", "300"),
+                }.items():
+                    try:
+                        diagnostics[key] = adb(*args, check=False)
+                    except (subprocess.SubprocessError, OSError) as error:
+                        diagnostics[key] = type(error).__name__
+                (out / "preflight-failure.json").write_text(json.dumps(diagnostics, indent=2) + "\n")
             adb("shell", "am", "force-stop", "com.android.chrome")
             if result.returncode:
                 return result.returncode
