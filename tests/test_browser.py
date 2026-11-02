@@ -74,3 +74,34 @@ class BrowserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_dynamic_display_waits_for_socket_not_fixed_delay(monkeypatch):
+    from captcha import browser as module
+    probe = Mock()
+    probe.__enter__ = Mock(return_value=probe)
+    probe.__exit__ = Mock(return_value=False)
+    probe.connect.side_effect = [ConnectionRefusedError(), None]
+    monkeypatch.setattr(module.socket, "AF_UNIX", 1, raising=False)
+    monkeypatch.setattr(module.socket, "socket", lambda *a: probe)
+    sleep = Mock()
+    monkeypatch.setattr(module.time, "sleep", sleep)
+    process = Mock()
+    process.poll.return_value = None
+    ManagedBrowser("unused", display=198)._wait_display(process)
+    probe.connect.assert_called_with("/tmp/.X11-unix/X198")
+    sleep.assert_called_once_with(0.02)
+
+
+def test_dynamic_display_fails_if_xvfb_exits():
+    import pytest
+    process = Mock()
+    process.poll.return_value = 1
+    with pytest.raises(RuntimeError, match="Xvfb exited"):
+        ManagedBrowser("unused", display=198)._wait_display(process)
+
+
+def test_dynamic_display_timeout_is_bounded():
+    import pytest
+    with pytest.raises(RuntimeError, match="not ready"):
+        ManagedBrowser("unused", display=198)._wait_display(Mock(), timeout=0)

@@ -28,7 +28,7 @@ def _port_open(port):
 
 class ManagedBrowser:
     def __init__(self, profile_dir, cdp_port=9223, display=None, lang="pt-BR",
-                 window="1280,900", chrome_bin="/usr/bin/google-chrome"):
+                 window="1280,900", chrome_bin="/usr/bin/google-chrome", quiet=False):
         self.profile_dir = profile_dir
         self.cdp_port = cdp_port
         self.display = display or _free_display()
@@ -36,8 +36,23 @@ class ManagedBrowser:
         self.window = window
         self.chrome_bin = chrome_bin
         self.procs = []
+        self.quiet = quiet
 
-    def start(self, timeout=40):
+    def _wait_display(self, process, timeout=5):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError("Xvfb exited during startup")
+            try:
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+                    probe.settimeout(0.05)
+                    probe.connect(f"/tmp/.X11-unix/X{self.display}")
+                return
+            except OSError:
+                time.sleep(0.02)
+        raise RuntimeError("Xvfb not ready in time")
+
+    def start(self, timeout=40, *, wait_ready=False):
         if _port_open(self.cdp_port):
             raise RuntimeError("CDP port already in use; choose another --cdp-port")
         os.makedirs(self.profile_dir, exist_ok=True)
@@ -45,10 +60,13 @@ class ManagedBrowser:
         env.pop("WAYLAND_DISPLAY", None)
         xv = subprocess.Popen(["Xvfb", f":{self.display}", "-screen", "0",
                                f"{self.window.split(',')[0]}x{self.window.split(',')[1]}x24"],
-                              stdout=open(f"/tmp/xvfb{self.display}.log", "ab"),
+                              stdout=open(os.devnull if self.quiet else f"/tmp/xvfb{self.display}.log", "ab"),
                               stderr=subprocess.STDOUT)
         self.procs.append(xv)
-        time.sleep(2)
+        if wait_ready:
+            self._wait_display(xv)
+        else:
+            time.sleep(2)
         if xv.poll() is not None:
             self.stop()
             raise RuntimeError("Xvfb exited during startup")
@@ -60,7 +78,7 @@ class ManagedBrowser:
              "--disable-dev-shm-usage", "--renderer-process-limit=4",
              f"--window-size={self.window}",
              f"--lang={self.lang}", "about:blank"],
-            env=env, stdout=open("/tmp/cdp-chrome-run.log", "ab"),
+            env=env, stdout=open(os.devnull if self.quiet else "/tmp/cdp-chrome-run.log", "ab"),
             stderr=subprocess.STDOUT)
         self.procs.append(ch)
         deadline = time.time() + timeout
@@ -72,7 +90,7 @@ class ManagedBrowser:
             except Exception:
                 if ch.poll() is not None:
                     raise RuntimeError("chrome exited during startup")
-                time.sleep(1)
+                time.sleep(0.05 if wait_ready else 1)
         raise RuntimeError("CDP not ready in time")
 
     def alive(self):

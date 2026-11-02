@@ -103,7 +103,7 @@ def tiles_ready(crop, grid):
 
 
 def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
-                success_selector=None):
+                success_selector=None, *, api_key=None):
     """One extract->solve->click round. Returns (done_bool, info_dict)."""
     info = {"round": rnd}
     t0 = time.monotonic()
@@ -140,8 +140,9 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
     t0 = time.monotonic()
     usage = {}
     try:
+        kwargs = {"api_key": api_key} if api_key is not None else {}
         idx = solve(text_img, tiles, model, ref_img=ref_img,
-                    reasoning_effort=reasoning_effort, usage=usage)
+                    reasoning_effort=reasoning_effort, usage=usage, **kwargs)
     except Exception as e:
         info["solve_s"] = round(time.monotonic() - t0, 1)
         info["solve_error"] = str(e)[:200]

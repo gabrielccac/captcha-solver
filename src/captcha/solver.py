@@ -42,8 +42,8 @@ PROMPT_REF = (
 
 
 def solve(header_img: Image.Image, tiles, model: str, timeout=90, ref_img=None,
-          reasoning_effort=None, usage=None) -> list[int]:
-    key = os.environ.get("OPENROUTER_API_KEY", "")
+          reasoning_effort=None, usage=None, api_key=None) -> list[int]:
+    key = api_key if api_key is not None else os.environ.get("OPENROUTER_API_KEY", "")
     if not key:
         raise RuntimeError("OPENROUTER_API_KEY not set")
     if ref_img is None:
