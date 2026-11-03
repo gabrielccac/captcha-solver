@@ -5,6 +5,11 @@ solver. `src/inss/` handles the GOV.BR login steps and the Meu INSS customer
 information and credit requests. `src/comprasnet/` validates the same GOV.BR
 login on Comprasnet. `runner.py` keeps the existing INSS command.
 
+The optional [`inss-login-http` flow](docs/auth-http.md) uses the same browser for
+bootstrap, CPF and captcha, then closes it and completes password/API login over
+HTTP. It supports Docker/Xvfb on Windows and keeps credentials/session tokens out
+of receipts and Git. See the linked guide for setup and validation limits.
+
 ## Setup
 
 Install `uv`, Google Chrome (`/usr/bin/google-chrome`), Xvfb, and `poppler-utils`

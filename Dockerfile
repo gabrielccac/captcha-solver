@@ -28,6 +28,7 @@ COPY pyproject.toml README.md runner.py ./
 COPY src/ src/
 RUN pip install .
 COPY docker_run.py ./
+COPY scripts/ scripts/
 COPY tests/ tests/
 USER 1000:1000
 ENTRYPOINT ["python", "runner.py"]
