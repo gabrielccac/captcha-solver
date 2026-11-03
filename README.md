@@ -8,7 +8,9 @@ login on Comprasnet. `runner.py` keeps the existing INSS command.
 The optional [`inss-login-http` flow](docs/auth-http.md) uses the same browser for
 bootstrap, CPF and captcha, then closes it and completes password/API login over
 HTTP. It supports Docker/Xvfb on Windows and keeps credentials/session tokens out
-of receipts and Git. See the linked guide for setup and validation limits.
+of receipts and Git. Optional `--fast-interactions` and `--batch-captcha` enable
+visual readiness and preloaded-image batching with per-round fallback. See the
+linked guide for setup and validation limits.
 
 ## Setup
 

@@ -160,7 +160,8 @@ def test_password_form_required_after_captcha():
 
 @pytest.mark.parametrize('deferred_capture', [False, True])
 @pytest.mark.parametrize('optimized',[False,True])
-def test_integrated_login_closes_browser_before_http_password(monkeypatch, deferred_capture,optimized):
+@pytest.mark.parametrize('batch',[False,True])
+def test_integrated_login_closes_browser_before_http_password(monkeypatch, deferred_capture,optimized,batch):
     events = []
     page, browser, manager = MagicMock(), MagicMock(), Mock()
     manager.start.return_value = "http://127.0.0.1:1234"
@@ -176,6 +177,12 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
     monkeypatch.setattr(http_login.browser_login, "submit_cpf", lambda *a,**kw: None)
     monkeypatch.setattr(http_login.hcaptcha, "vis_modal", lambda p: True)
     monkeypatch.setattr(http_login, "adopt", lambda *a: None)
+    prefetched=Mock()
+    prefetched.statistics.return_value={'enabled':True,'model_calls':0}
+    if batch:
+        from captcha import prefetch
+        monkeypatch.setattr(prefetch,'PrefetchedSolver',lambda transport:prefetched)
+        monkeypatch.setattr(http_login.requests,'Session',MagicMock())
 
     def capture():
         callback = page.route.call_args.args[1]
@@ -204,13 +211,17 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
     monkeypatch.setattr(http_login, "verify_api", lambda *a: a[-1].update(api_session_verified=True))
     session = Mock(headers={}, cookies={})
     session.post.return_value = Response()
-    receipt = http_login.login(session, "00000000000", "fixture-password", "fixture-key",optimize_interactions=optimized)
+    receipt = http_login.login(session, "00000000000", "fixture-password", "fixture-key",optimize_interactions=optimized,batch_captcha=batch)
     assert receipt["success"] and receipt["api_session_verified"]
     assert receipt["browser_password_posts"] == 0 and receipt["http_password_posts"] == 1
     session.post.assert_called_once()
     assert events[-1] == "http_password"
     manager.start.assert_called_once_with(wait_ready=True)
     assert receipt['interaction_profile']==('optimized' if optimized else 'reference')
+    if batch:
+        prefetched.attach.assert_called_once_with(page)
+        prefetched.close.assert_called_once()
+        assert receipt['captcha_batch']['enabled']
 
 
 @pytest.mark.parametrize("error,code", [(AuthError("two_factor_required"), "two_factor_required"),
@@ -239,7 +250,8 @@ def test_cli_rejects_secret_arguments_without_echo(monkeypatch, capsys):
 
 
 @pytest.mark.parametrize('fast',[False,True])
-def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch, tmp_path,fast):
+@pytest.mark.parametrize('batch',[False,True])
+def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch, tmp_path,fast,batch):
     import importlib.util
     from pathlib import Path
     import sys
@@ -250,7 +262,8 @@ def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch,
     env = tmp_path / ".env"
     env.write_text("GOVBR_PASSWORD=fixture-secret", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["govbr_http_docker.py", "--env-file", str(env),
-                                    "--out", str(tmp_path / "out")]+(['--fast-interactions'] if fast else []))
+                                    "--out", str(tmp_path / "out")]+(['--fast-interactions'] if fast else [])
+                                    +(['--batch-captcha'] if batch else []))
     monkeypatch.setattr(launcher.os, "getuid", lambda: 1000, raising=False)
     monkeypatch.setattr(launcher.os, "getgid", lambda: 1000, raising=False)
     run = Mock(return_value=SimpleNamespace(returncode=0))
@@ -262,6 +275,7 @@ def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch,
     assert "--env" not in command and "--env-file" not in command[:command.index("inss-login-http")]
     assert "--read-only" in command and "--publish" not in command
     assert ('--fast-interactions' in command)==fast
+    assert ('--batch-captcha' in command)==batch
 
 
 def test_solver_accepts_explicit_key_without_modifying_environment(monkeypatch):

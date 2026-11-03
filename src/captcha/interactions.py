@@ -55,7 +55,8 @@ class DynamicInteractions:
         self.stable_ms=stable_ms
         self.metrics=[]
 
-    def images_ready(self, crop, grid):
+    @staticmethod
+    def images_ready(crop, grid):
         # The calibrated 3x3 widget has instruction text above the grid.
         end_y=max(17,min(104,grid[1]-16))
         instruction=crop.convert('RGB').crop((16,16,max(17,int(crop.width*.6)),end_y))

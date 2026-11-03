@@ -103,7 +103,7 @@ def tiles_ready(crop, grid):
 
 
 def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
-                success_selector=None, *, api_key=None, interactions=None):
+                success_selector=None, *, api_key=None, interactions=None, vision_solver=None):
     """One extract->solve->click round. Returns (done_bool, info_dict)."""
     info = {"round": rnd}
     t0 = time.monotonic()
@@ -121,7 +121,9 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
             return False, {**info, "why": "shot-fail"}
         crop = Image.open(shot_path).copy()
         grid = find_grid(crop)
-        if tiles_ready(crop, grid) and (interactions is None or interactions.images_ready(crop,grid)):
+        if (tiles_ready(crop, grid)
+                and (interactions is None or interactions.images_ready(crop,grid))
+                and (vision_solver is None or vision_solver.images_ready(crop,grid))):
             break
         if time.monotonic() >= deadline:
             return False, {**info, "why": "tiles-not-ready"}
@@ -141,7 +143,8 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
     usage = {}
     try:
         kwargs = {"api_key": api_key} if api_key is not None else {}
-        idx = solve(text_img, tiles, model, ref_img=ref_img,
+        solve_images = vision_solver if vision_solver is not None else solve
+        idx = solve_images(text_img, tiles, model, ref_img=ref_img,
                     reasoning_effort=reasoning_effort, usage=usage, **kwargs)
     except Exception as e:
         info["solve_s"] = round(time.monotonic() - t0, 1)
