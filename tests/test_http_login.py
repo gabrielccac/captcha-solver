@@ -158,7 +158,8 @@ def test_password_form_required_after_captcha():
         password_page(Mock(), response)
 
 
-def test_integrated_login_closes_browser_before_http_password(monkeypatch):
+@pytest.mark.parametrize('deferred_capture', [False, True])
+def test_integrated_login_closes_browser_before_http_password(monkeypatch, deferred_capture):
     events = []
     page, browser, manager = MagicMock(), MagicMock(), Mock()
     manager.start.return_value = "http://127.0.0.1:1234"
@@ -175,10 +176,16 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch):
     monkeypatch.setattr(http_login.hcaptcha, "vis_modal", lambda p: True)
     monkeypatch.setattr(http_login, "adopt", lambda *a: None)
 
-    def solve(*args, **kwargs):
+    def capture():
         callback = page.route.call_args.args[1]
         callback(Mock(request=SimpleNamespace(url="https://sso.acesso.gov.br/login", method="POST",
             post_data="token=" + "A" * 40, headers={})))
+
+    def solve(*args, **kwargs):
+        if deferred_capture:
+            page.wait_for_selector.side_effect = lambda *a, **kw: capture()
+        else:
+            capture()
         return True, {"round": 0, "solve_s": 1}
 
     monkeypatch.setattr(http_login.hcaptcha, "solve_round", solve)

@@ -148,6 +148,7 @@ def login(session, cpf, password, api_key, *, receipt=None):
                     if time.monotonic() > deadline:
                         raise AuthError("captcha_challenge_missing")
                     page.wait_for_timeout(500)
+                done = False
                 for rnd in range(3):
                     if captured.captured_at is not None:
                         break
@@ -166,9 +167,12 @@ def login(session, cpf, password, api_key, *, receipt=None):
                         raise AuthError("solver_provider_error")
                     if captured.captured_at is not None or done:
                         break
-            if captured.captured_at is None:
+            if captured.captured_at is None and not done:
                 raise AuthError("captcha_unsolved")
+            # A minted token can precede the callback POST; pump browser events first.
             page.wait_for_selector(HANDOFF_SELECTOR, timeout=15000)
+            if captured.captured_at is None:
+                raise AuthError("captcha_token_not_captured")
             receipt["token_captured_before_browser_send"] = True
             adopt(page, session)
             receipt["token_age_at_http_post_ms"] = round((time.monotonic() - captured.captured_at) * 1000)
