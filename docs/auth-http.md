@@ -19,8 +19,8 @@ requests.Session ← browser cookies + actual User-Agent
 
 The browser still handles CPF. This is not an independent captcha token pool.
 Each login starts a fresh default Chrome profile, without incognito contexts or
-viewport overrides. Chrome flags, fonts, CPF typing, captcha clicks and round
-waits match the reference implementation. Startup uses X11 socket readiness and
+viewport overrides. With the optional flags disabled, Chrome flags, fonts, CPF
+typing, captcha clicks and round waits match the reference implementation. Startup uses X11 socket readiness and
 faster CDP polling, already validated separately. Legacy commands retain their
 original startup defaults.
 
@@ -63,10 +63,32 @@ the displayed value and enabled button. Missing selection confirmation stops wit
 `captcha_selection_not_confirmed`, without retrying clicks or posting a password.
 The pixel detector is calibrated to the observed widget theme; a changed theme
 requires revalidation. The default interaction timing remains the reference timing.
-The standalone CLI with this option passed a real authorized-account check on
-2026-11-03 in 32.227 s, with authenticated API HTTP 200 and zero browser password
-POSTs. The separate experimental image-batching prototype is not included in
-this CLI option. These checks do not establish a production success rate.
+The standalone CLI with this option alone passed a real authorized-account check
+on 2026-11-03 in 32.227 s, with authenticated API HTTP 200 and zero browser
+password POSTs. Image batching is enabled separately below.
+
+`--batch-captcha` enables passive capture of hCaptcha image responses in RAM.
+When 18 original images of the same size are already available, and all nine
+visible tiles map confidently to those assets by pixels, one vision request can
+classify both rounds. Predictions are reused only while instruction and reference
+images still match. Incomplete pools, duplicate/uncertain mappings or a changed
+instruction use the original per-round solver. A new challenge invalidates the
+cache, including in-flight responses from the preceding challenge. This path does
+not evaluate JavaScript inside the captcha iframe, fetch assets independently or
+share predictions/tokens between logins. Cache and response sizes are bounded.
+
+To enable both independently selectable optimizations:
+
+```sh
+python scripts/govbr_http_docker.py --fast-interactions --batch-captcha
+# Or on a configured Linux installation:
+inss-login-http --env-file .env --fast-interactions --batch-captcha
+```
+
+The receipt's `captcha_batch` contains only counters for model requests, batch
+requests, cached-round hits and per-round fallback reasons. Signed asset URLs,
+images, predictions, model keys and authentication tokens are never exported.
+Vision HTTP connections use a separate session from the gov.br session.
 
 ## Reuse a session in memory
 
@@ -100,6 +122,17 @@ The validation image reused the reference runtime (Chrome 156.0.8078.79) with th
 new package installed, preserving fonts and dependencies. Rebuilding the standard
 Dockerfile can update Chrome; each receipt records the actual version. Live checks
 require local credentials; receipts and private account data are not committed.
+
+On 2026-11-03 the installed package with both optional flags passed two additional
+Docker launcher checks, both with authenticated API HTTP 200, one HTTP password
+POST and zero browser password POSTs. One took 14.627 s without an image challenge;
+it does not measure image solving. The other took 51.193 s and exercised passive
+capture of 18 images, one batch model call and one per-round fallback after an
+instruction change was detected. This live sample validates batch integration
+and fallback, not a batch speed improvement or reuse across both rounds. Offline
+tests cover two rounds sharing one model call when their instructions match.
+The full Linux regression suite passed 164 tests and 18 subtests, with three
+optional tests skipped. These checks do not establish a production success rate.
 
 Scaling, browser pooling, concurrent logins, other accounts/consent states and
 recovery after expiration have not been validated. A token is consumed once in
