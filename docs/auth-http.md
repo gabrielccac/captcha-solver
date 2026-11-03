@@ -55,6 +55,19 @@ pip install .
 inss-login-http --env-file .env --out runs/auth-http
 ```
 
+`--fast-interactions` is opt-in on both the CLI and Docker launcher. It confirms
+the 3x3 widget's teal check marks and visual stability instead of sleeping 2.5 s
+per round, and uses smaller fixed click/focus margins. CPF typing cadence,
+Chrome/CDP/default context and viewport remain the same. CPF submission waits for
+the displayed value and enabled button. Missing selection confirmation stops with
+`captcha_selection_not_confirmed`, without retrying clicks or posting a password.
+The pixel detector is calibrated to the observed widget theme; a changed theme
+requires revalidation. The default interaction timing remains the reference timing.
+The standalone CLI with this option passed a real authorized-account check on
+2026-11-03 in 32.227 s, with authenticated API HTTP 200 and zero browser password
+POSTs. The separate experimental image-batching prototype is not included in
+this CLI option. These checks do not establish a production success rate.
+
 ## Reuse a session in memory
 
 See [session validity, reuse and reauthentication](session-tokens.md) for the

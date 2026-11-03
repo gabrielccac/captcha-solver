@@ -11,6 +11,7 @@ def main():
     parser.add_argument("--env-file", type=Path, default=root / ".env")
     parser.add_argument("--out", type=Path, default=root / "runs/auth-http")
     parser.add_argument("--image", default="captcha-inss-http:local")
+    parser.add_argument('--fast-interactions',action='store_true')
     args = parser.parse_args()
     credentials = args.env_file.resolve(strict=True)
     output = args.out.resolve()
@@ -26,6 +27,8 @@ def main():
         "--mount", f"type=bind,src={output},dst=/out",
         "--entrypoint", "inss-login-http", args.image,
         "--env-file", "/run/credentials.env", "--out", "/out"]
+    if args.fast_interactions:
+        command.append('--fast-interactions')
     return subprocess.run(command, check=False).returncode
 
 
