@@ -103,7 +103,7 @@ def tiles_ready(crop, grid):
 
 
 def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
-                success_selector=None, *, api_key=None):
+                success_selector=None, *, api_key=None, interactions=None):
     """One extract->solve->click round. Returns (done_bool, info_dict)."""
     info = {"round": rnd}
     t0 = time.monotonic()
@@ -121,7 +121,7 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
             return False, {**info, "why": "shot-fail"}
         crop = Image.open(shot_path).copy()
         grid = find_grid(crop)
-        if tiles_ready(crop, grid):
+        if tiles_ready(crop, grid) and (interactions is None or interactions.images_ready(crop,grid)):
             break
         if time.monotonic() >= deadline:
             return False, {**info, "why": "tiles-not-ready"}
@@ -155,6 +155,9 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
     info["solve_s"] = round(time.monotonic() - t0, 1)
     if not idx:
         return False, {**info, "why": "empty-picks"}
+    if interactions is not None:
+        interactions.prepare(crop,grid,idx)
+    click_target=interactions.click if interactions is not None else click
     t0 = time.monotonic()
     for n in idx:
         boxes = wait_modal(page, timeout_s=10)
@@ -172,7 +175,7 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
             grid = find_grid(crop)
         centers = tile_centers_page(boxes[0], clip, grid)
         x, y = centers[n - 1]
-        click(page, x, y)
+        click_target(page, x, y)
     if "stopped_at" in info:
         return False, {**info, "why": "interrupted-clicks"}
     boxes = vis_modal(page)
@@ -181,8 +184,11 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
         ax = clip["x"] + clip["width"] - 58
         ay = clip["y"] + clip["height"] - 38
         # settle: let widget register all toggles before submitting (race fix)
-        page.wait_for_timeout(2500)
-        click(page, ax, ay)
+        if interactions is None:
+            page.wait_for_timeout(2500)
+        elif not interactions.wait_ready(page,clip):
+            return False, {**info, "why":"selection_not_confirmed"}
+        click_target(page, ax, ay)
         info["submitted"] = True
     else:
         info["submitted"] = False

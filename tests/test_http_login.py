@@ -21,7 +21,7 @@ def no_network(monkeypatch):
 
 def test_env_file_is_read_as_data_without_evaluation(tmp_path):
     path = tmp_path / ".env"
-    path.write_text('# comentário\nGOVBR_CPF=00000000000\nGOVBR_PASSWORD="fixture@password"\nOPENROUTER_API_KEY=fixture-key\n', encoding="utf-8")
+    path.write_text('# comentÃ¡rio\nGOVBR_CPF=00000000000\nGOVBR_PASSWORD="fixture@password"\nOPENROUTER_API_KEY=fixture-key\n', encoding="utf-8")
     loaded = load_env_file(path)
     assert loaded["GOVBR_PASSWORD"] == "fixture@password"
     assert loaded["OPENROUTER_API_KEY"] == "fixture-key"
@@ -153,13 +153,14 @@ def test_failed_post_cannot_reuse_captcha():
 
 def test_password_form_required_after_captcha():
     response = SimpleNamespace(url="https://sso.acesso.gov.br/login", status_code=200,
-                               text="<html>captcha inválido</html>")
+                               text="<html>captcha invÃ¡lido</html>")
     with pytest.raises(AuthError, match="captcha_http_not_accepted"):
         password_page(Mock(), response)
 
 
 @pytest.mark.parametrize('deferred_capture', [False, True])
-def test_integrated_login_closes_browser_before_http_password(monkeypatch, deferred_capture):
+@pytest.mark.parametrize('optimized',[False,True])
+def test_integrated_login_closes_browser_before_http_password(monkeypatch, deferred_capture,optimized):
     events = []
     page, browser, manager = MagicMock(), MagicMock(), Mock()
     manager.start.return_value = "http://127.0.0.1:1234"
@@ -172,7 +173,7 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
     monkeypatch.setattr(http_login, "sync_playwright", lambda: pw)
     monkeypatch.setattr(http_login, "ManagedBrowser", lambda *a, **kw: manager)
     monkeypatch.setattr(http_login.browser_login, "goto_login", lambda p: None)
-    monkeypatch.setattr(http_login.browser_login, "submit_cpf", lambda *a: None)
+    monkeypatch.setattr(http_login.browser_login, "submit_cpf", lambda *a,**kw: None)
     monkeypatch.setattr(http_login.hcaptcha, "vis_modal", lambda p: True)
     monkeypatch.setattr(http_login, "adopt", lambda *a: None)
 
@@ -203,12 +204,13 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
     monkeypatch.setattr(http_login, "verify_api", lambda *a: a[-1].update(api_session_verified=True))
     session = Mock(headers={}, cookies={})
     session.post.return_value = Response()
-    receipt = http_login.login(session, "00000000000", "fixture-password", "fixture-key")
+    receipt = http_login.login(session, "00000000000", "fixture-password", "fixture-key",optimize_interactions=optimized)
     assert receipt["success"] and receipt["api_session_verified"]
     assert receipt["browser_password_posts"] == 0 and receipt["http_password_posts"] == 1
     session.post.assert_called_once()
     assert events[-1] == "http_password"
     manager.start.assert_called_once_with(wait_ready=True)
+    assert receipt['interaction_profile']==('optimized' if optimized else 'reference')
 
 
 @pytest.mark.parametrize("error,code", [(AuthError("two_factor_required"), "two_factor_required"),
@@ -236,7 +238,8 @@ def test_cli_rejects_secret_arguments_without_echo(monkeypatch, capsys):
     assert "fixture-secret" not in capsys.readouterr().err
 
 
-def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch, tmp_path):
+@pytest.mark.parametrize('fast',[False,True])
+def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch, tmp_path,fast):
     import importlib.util
     from pathlib import Path
     import sys
@@ -247,7 +250,7 @@ def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch,
     env = tmp_path / ".env"
     env.write_text("GOVBR_PASSWORD=fixture-secret", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["govbr_http_docker.py", "--env-file", str(env),
-                                    "--out", str(tmp_path / "out")])
+                                    "--out", str(tmp_path / "out")]+(['--fast-interactions'] if fast else []))
     monkeypatch.setattr(launcher.os, "getuid", lambda: 1000, raising=False)
     monkeypatch.setattr(launcher.os, "getgid", lambda: 1000, raising=False)
     run = Mock(return_value=SimpleNamespace(returncode=0))
@@ -258,6 +261,7 @@ def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch,
     assert "fixture-secret" not in repr(command)
     assert "--env" not in command and "--env-file" not in command[:command.index("inss-login-http")]
     assert "--read-only" in command and "--publish" not in command
+    assert ('--fast-interactions' in command)==fast
 
 
 def test_solver_accepts_explicit_key_without_modifying_environment(monkeypatch):
@@ -281,3 +285,29 @@ def test_library_errors_hide_browser_payloads(monkeypatch):
     with requests.Session() as session, pytest.raises(AuthError, match="^browser_error$") as error:
         http_login.login(session, "00000000000", "fixture-password", "fixture-key")
     assert error.value.__suppress_context__
+
+
+def test_unconfirmed_selection_stops_without_reclick_or_password(monkeypatch):
+    import pytest
+    from unittest.mock import MagicMock
+    from types import SimpleNamespace
+    from inss import http_login
+    from auth.govbr import AuthError
+    page,browser,manager=MagicMock(),MagicMock(),Mock()
+    browser.contexts=[SimpleNamespace(pages=[page])]
+    pw=MagicMock()
+    pw.__enter__.return_value.chromium.connect_over_cdp.return_value=browser
+    monkeypatch.setattr(http_login,'sync_playwright',lambda:pw)
+    monkeypatch.setattr(http_login,'ManagedBrowser',lambda *a,**kw:manager)
+    monkeypatch.setattr(http_login.browser_login,'goto_login',Mock())
+    monkeypatch.setattr(http_login.browser_login,'submit_cpf',Mock())
+    monkeypatch.setattr(http_login.hcaptcha,'vis_modal',lambda p:True)
+    solve=Mock(return_value=(False,{'why':'selection_not_confirmed'}))
+    monkeypatch.setattr(http_login.hcaptcha,'solve_round',solve)
+    session=Mock(headers={},cookies={})
+    with pytest.raises(AuthError,match='captcha_selection_not_confirmed'):
+        http_login.login(session,'00000000000','fixture-password','fixture-key')
+    solve.assert_called_once()
+    session.post.assert_not_called()
+    browser.close.assert_called_once()
+    manager.stop.assert_called_once()
