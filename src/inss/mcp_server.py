@@ -134,6 +134,7 @@ def get_inss_payments(cpf: str, password: str = "", medical_report_nb: str = "",
             "payments_requested": data.get("payments_requested", True),
             "letters_requested": data.get("letters_requested", False),
             "timings": timings,
+            "login_timing": data.get("login_timing", {}),
             "payments": [{
                 "benefit_number": str(c["nb"]) if c.get("nb") is not None else None,
                 "competence": c.get("dtCompetenciaCredito"),

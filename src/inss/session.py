@@ -8,6 +8,7 @@ import re
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -250,7 +251,7 @@ def api_session(auth, mi):
     return s, {"Authorization": "Bearer " + auth, "mitoken": mi}
 
 
-def concession_letters(auth, mi, output_dir, *, benefit_numbers=None, session=None):
+def concession_letters(auth, mi, output_dir, *, benefit_numbers=None, session=None, executor=None):
     benefits = token_claims(mi).get("nbs", [])
     if not isinstance(benefits, list) or any(not re.fullmatch(r"[0-9]{1,15}", str(nb)) for nb in benefits):
         raise ValueError("Invalid benefit numbers in session")
@@ -270,9 +271,11 @@ def concession_letters(auth, mi, output_dir, *, benefit_numbers=None, session=No
     def download(nb):
         result = {"benefit_number": nb, "http_status": None, "file": None}
         started = time.monotonic()
+        response = None
         try:
             response = requests.get(f"{API}/calculoBeneficioServices/concalPdf/{nb}",
                                     headers=headers, timeout=30, allow_redirects=False)
+            result["download_ms"] = round((time.monotonic() - started) * 1000)
             result["http_status"] = response.status_code
             if response.status_code != 200:
                 result["error"] = "Carta unavailable" if response.status_code == 404 else "Carta request failed"
@@ -285,22 +288,28 @@ def concession_letters(auth, mi, output_dir, *, benefit_numbers=None, session=No
                     path.chmod(0o600)
                     fh.write(response.content)
                 result.update(file=filename, size_bytes=len(response.content))
+                parsing = time.monotonic()
                 try:
                     result["parsed"] = parse_concession_pdf(path)
                 except (OSError, subprocess.SubprocessError):
                     result["parse_error"] = "PDF text extraction failed; check pdftotext installation"
+                finally:
+                    result["parse_ms"] = round((time.monotonic() - parsing) * 1000)
         except requests.RequestException:
             result["error"] = "Carta request timed out or could not connect"
         except OSError:
             result.update(file=None, error="Carta could not be saved")
+        finally:
+            if response is not None:
+                response.close()
         result["elapsed_s"] = round(time.monotonic() - started, 1)
         return result
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with nullcontext(executor) if executor is not None else ThreadPoolExecutor(max_workers=5) as pool:
         return list(pool.map(download, dict.fromkeys(map(str, benefits))))
 
 
-def extract(cpf_full, auth, mi, windows=None, *, session=None, include_userinfo=True):
+def extract(cpf_full, auth, mi, windows=None, *, session=None, include_userinfo=True, executor=None):
     """Keep successful windows when a sibling times out or returns invalid JSON."""
     s, h = api_session(auth, mi) if session is None else (session, {})
     cpf_id = cpf_full.lstrip("0")
@@ -339,7 +348,7 @@ def extract(cpf_full, auth, mi, windows=None, *, session=None, include_userinfo=
         result["elapsed_s"] = round(time.monotonic() - started, 1)
         return result, body
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with nullcontext(executor) if executor is not None else ThreadPoolExecutor(max_workers=5) as pool:
         futures = [pool.submit(get_window, window) for window in windows]
         if include_userinfo:
             started = time.monotonic()

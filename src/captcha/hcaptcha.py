@@ -103,7 +103,8 @@ def tiles_ready(crop, grid):
 
 
 def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
-                success_selector=None, *, api_key=None, interactions=None, vision_solver=None):
+                success_selector=None, *, api_key=None, interactions=None, vision_solver=None,
+                vision_session=None):
     """One extract->solve->click round. Returns (done_bool, info_dict)."""
     info = {"round": rnd}
     t0 = time.monotonic()
@@ -143,6 +144,8 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
     usage = {}
     try:
         kwargs = {"api_key": api_key} if api_key is not None else {}
+        if vision_solver is None and vision_session is not None:
+            kwargs["session"] = vision_session
         solve_images = vision_solver if vision_solver is not None else solve
         idx = solve_images(text_img, tiles, model, ref_img=ref_img,
                     reasoning_effort=reasoning_effort, usage=usage, **kwargs)
