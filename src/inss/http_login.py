@@ -82,6 +82,53 @@ def verify_api(session, code, cpf, receipt):
     receipt["api_session_verified"] = True
 
 
+def renew(session, cpf, *, receipt=None):
+    """Renew via retained SSO cookies; caller must serialize access to this session.
+
+    No browser, password, captcha or model key. Commit the new API headers/cookies
+    only after a matching OAuth callback, identity check and authenticated HTTP 200.
+    """
+    receipt = {} if receipt is None else receipt
+    receipt.update(success=False, browser_password_posts=0, http_password_posts=0)
+    started = time.monotonic()
+    try:
+        if len(cpf) != 11 or not cpf.isascii() or not cpf.isdigit():
+            raise AuthError("invalid_cpf_format")
+        ua = session.headers.get("User-Agent")
+        if not ua or not any(cookie.domain.lstrip(".") in ("acesso.gov.br", "sso.acesso.gov.br")
+                             for cookie in session.cookies):
+            raise AuthError("sso_session_missing")
+        old_token = session.headers.get("Authorization")
+        with requests.Session() as sso, requests.Session() as api:
+            # API bearer headers must never be forwarded to the SSO host.
+            sso.headers.update({"User-Agent": ua, "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"})
+            sso.cookies.update(session.cookies)
+            api.headers["User-Agent"] = ua
+            scope = parse_qs(urlsplit(browser_login.AUTHZ).query)["scope"][0]
+            auth = GovBrAuth(sso, NullCaptcha(), client_id=CLIENT, redirect_uri=PORTAL, scope=scope)
+            hops = auth.resume()
+            receipt.update(oauth_callback_received=True, redirect_hops=len(hops))
+            verify_api(api, auth.authorization_code, cpf, receipt)
+            receipt["access_token_changed"] = api.headers.get("Authorization") != old_token
+            session.headers.update(api.headers)
+            session.cookies.clear()
+            session.cookies.update(sso.cookies)
+            session.cookies.update(api.cookies)
+        receipt.update(success=True, code="ok")
+        return receipt
+    except AuthError as error:
+        receipt["code"] = error.code
+        raise
+    except requests.RequestException:
+        receipt["code"] = "network_error"
+        raise AuthError("network_error") from None
+    except Exception:
+        receipt["code"] = "renewal_runtime_error"
+        raise AuthError("renewal_runtime_error") from None
+    finally:
+        receipt["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+
+
 def login(session, cpf, password, api_key, *, receipt=None, optimize_interactions=False,
           batch_captcha=False):
     """Populate a caller-owned fresh requests.Session, or raise a sanitized error.

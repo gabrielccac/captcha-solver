@@ -141,6 +141,27 @@ class GovBrAuth:
         self.authorization_id = ids[0]
         return self.authorization_id
 
+    def resume(self, max_hops: int = 8):
+        """Obtain a fresh code using existing SSO cookies, without submitting forms."""
+        url = self.authorize_url()
+        response = self._get(url)
+        self._check_response(response)
+        location = response.headers.get("Location", "")
+        if response.status_code not in REDIRECTS:
+            self._read_page(response, url)
+            raise AuthError("sso_login_required" if self.page.kind in ("account", "password")
+                            else "sso_interaction_required")
+        if not location:
+            raise AuthError("redirect_missing")
+        self._next_location = urljoin(url, location)
+        try:
+            return self.finish(max_hops=max_hops)
+        except AuthError as error:
+            if error.code == "login_not_completed":
+                raise AuthError("sso_login_required" if self.page and self.page.kind in ("account", "password")
+                                else "sso_interaction_required") from None
+            raise
+
     def open_login(self) -> LoginPage:
         if not self.authorization_id:
             self.start()
