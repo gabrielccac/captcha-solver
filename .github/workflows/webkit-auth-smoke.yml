@@ -1,0 +1,39 @@
+name: WebKit headless - authorized authentication smoke test
+on:
+  push:
+    branches: [test/gha-webkit-20261104]
+permissions:
+  contents: read
+concurrency:
+  group: authorized-webkit-smoke
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: webkit-smoke-20261104
+    steps:
+      - name: Checkout reviewed experiment
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Build pinned WebKit and font environment
+        run: docker build --tag inss-webkit-gha:test --file experiments/gha-webkit/Dockerfile .
+      - name: Mandatory offline authentication tests
+        run: >-
+          docker run --rm --network none --read-only
+          --tmpfs /tmp:rw,nosuid,size=512m,mode=1777
+          --entrypoint python inss-webkit-gha:test
+          -m pytest tests/test_auth.py tests/test_browser_captcha.py -q -p no:cacheprovider
+      - name: Offline WebKit render and input preflight
+        run: >-
+          docker run --rm --init --network none --read-only --cpus 1 --memory 1400m
+          --pids-limit 320 --shm-size 128m --tmpfs /tmp:rw,nosuid,size=512m,mode=1777
+          --security-opt seccomp=experiments/gha-webkit/seccomp.json
+          inss-webkit-gha:test --offline-preflight
+      - name: One real login and authenticated endpoint validation
+        env:
+          GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
+          GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
+          OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}
+        run: python3 experiments/gha-webkit/run_container.py
