@@ -50,3 +50,49 @@ o tempo da resolução do captcha.
 
 Referências: [exportadores e compressão do BuildKit](https://docs.docker.com/build/exporters/image-registry/),
 [técnicas do docker-repack](https://github.com/orf/docker-repack/blob/v0.5.0/docs/about.md).
+
+## Resultados medidos em 2026-11-04
+
+[Rodada final](https://github.com/gabrielccac/captcha-solver/actions/runs/41931390727):
+20/20 jobs de medição passaram. Todos começaram sem a imagem e registraram zero
+camadas já existentes. Em cada job passaram os 59 testes offline, o preflight e a
+assinatura completa do runtime. WebKit 27.2 e a assinatura das 429 fontes foram
+preservados. Os runners tiveram CPUs diferentes, registradas nos artefatos.
+
+| Variante | MB comprimidos (decimal) | Download: mediana [mín–máx], s | Prontidão: mediana [mín–máx], s | Redução da mediana de prontidão |
+|---|---:|---:|---:|---:|
+| baseline | 551,4 | 20,04 [14,90–20,35] | 23,67 [19,05–24,30] | — |
+| clean | 508,1 | 13,93 [11,39–24,32] | 18,69 [18,20–28,72] | 21,0% |
+| zstd | 482,5 | 18,00 [13,51–21,04] | 21,55 [17,81–24,65] | 9,0% |
+| repack corrigido, OCI/Zstandard | 418,0 | 12,00 [11,24–18,53] | 16,12 [15,29–22,12] | 31,9% |
+
+O ganho mediano do repack foi 7,55 s até a prontidão e 8,04 s no download. O
+intervalo observado se sobrepõe ao baseline; cinco amostras não provam um ganho
+fixo em qualquer runner. A construção/publicação única e a fila do GitHub não
+entram nesta tabela. A assinatura de runtime final foi
+`cbc4fbdfa089d7b5d4240be3ae6576e8653ae1002fcb73d8fb425fa657d60923`.
+
+[Login real com zstd](https://github.com/gabrielccac/captcha-solver/actions/runs/41931479837):
+sucesso, endpoint INSS independente HTTP 200, access token e miToken presentes,
+duas rodadas visuais. Login interno 34,19 s; worker com validação independente
+39,92 s; job 68 s; evento até conclusão 72 s. O ambiente temporário de segredos
+foi removido e nenhum artefato de autenticação foi publicado.
+
+### Execuções exploratórias e limites
+
+As execuções que falharam não foram misturadas com as 20 medições finais:
+
+- [Preparação original](https://github.com/gabrielccac/captcha-solver/actions/runs/41929471212):
+  a conferência bloqueou as alterações Unicode do repack bruto.
+- [Diagnóstico dos caminhos](https://github.com/gabrielccac/captcha-solver/actions/runs/41930487652):
+  cinco diferenças de caminhos/links; conteúdo do certificado idêntico.
+- [Primeira publicação corrigida](https://github.com/gabrielccac/captcha-solver/actions/runs/41930930489):
+  um dos cinco jobs do repack apresentou assinatura diferente, embora os testes
+  e o render passassem. Essa imagem declarou camadas gzip e foi rejeitada; não
+  foi adotada. A causa daquela divergência não foi determinada.
+- [Diagnóstico do baseline em quatro runners](https://github.com/gabrielccac/captcha-solver/actions/runs/41931767029):
+  snapshots idênticos em quatro modelos de CPU. O workflow temporário foi removido.
+
+A publicação final usa exportador OCI com Zstandard explícito e outro digest.
+Passou em 5/5 verificações completas nessa rodada. Nenhum dado desses testes
+comprova escalabilidade de autenticação em produção; o teste é de preparação CI.
