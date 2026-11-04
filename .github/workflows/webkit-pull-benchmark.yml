@@ -7,6 +7,7 @@ on:
       - experiments/gha-webkit/prepare_benchmark.py
       - experiments/gha-webkit/benchmark_pull.py
       - experiments/gha-webkit/runtime_fingerprint.py
+      - experiments/gha-webkit/benchmark-images.json
 permissions:
   contents: read
   packages: read
@@ -39,7 +40,7 @@ jobs:
         if: always()
         with:
           name: image-benchmark-build
-          path: image-benchmark-build.json
+          path: image-benchmark-*.json
           retention-days: 7
       - name: Remove registry login
         if: always()

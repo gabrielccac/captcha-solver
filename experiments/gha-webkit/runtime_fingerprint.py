@@ -3,11 +3,13 @@ import hashlib
 import json
 import os
 import stat
+import sys
 
 EXCLUDE = ('/proc', '/sys', '/dev', '/tmp', '/var/lib/apt/lists', '/var/cache/apt',
            '/etc/hosts', '/etc/hostname', '/etc/resolv.conf', '/.dockerenv')
 digest = hashlib.sha256()
 count = 0
+records = []
 for directory, dirs, files in os.walk('/', topdown=True, followlinks=False):
     dirs[:] = sorted(d for d in dirs if os.path.join(directory, d) not in EXCLUDE)
     for name in sorted(dirs + files):
@@ -25,5 +27,10 @@ for directory, dirs, files in os.walk('/', topdown=True, followlinks=False):
                     content.update(block)
             item.append(content.hexdigest())
         digest.update(json.dumps(item, ensure_ascii=True).encode() + b'\n')
+        if '--records' in sys.argv:
+            records.append(item)
         count += 1
-print(json.dumps(dict(sha256=digest.hexdigest(), entries=count)))
+result = dict(sha256=digest.hexdigest(), entries=count)
+if '--records' in sys.argv:
+    result['records'] = records
+print(json.dumps(result))

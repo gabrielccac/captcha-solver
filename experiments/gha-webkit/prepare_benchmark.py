@@ -35,18 +35,14 @@ def manifest(image):
     return value
 
 
-def fingerprint(image):
+def fingerprint(image, detailed=False):
     return json.loads(run('docker', 'run', '--rm', '-i', '--network', 'none',
         '--read-only', '--user', '0:0', '--entrypoint', 'python', image, '-',
+        *(['--records'] if detailed else []),
         input=(ROOT / 'runtime_fingerprint.py').read_text(), capture=True))
 
 
-def main():
-    work = Path('/tmp/webkit-image-benchmark')
-    work.mkdir(exist_ok=False)
-    run('docker', 'pull', BASE)
-    original = config(BASE)
-    reference = fingerprint(BASE)
+def prepare_images(work, original):
     # COPY the final filesystem eliminates whiteout/dead bytes; metadata is restored explicitly.
     assert not any(original.get(k) for k in ('Volumes', 'ExposedPorts', 'Healthcheck', 'StopSignal', 'OnBuild'))
     lines = [f'FROM {BASE} AS clean', 'USER 0:0',
@@ -62,7 +58,6 @@ def main():
     (work / 'Dockerfile.zstd').write_text(f'FROM {BASE}\n')
     run('docker', 'buildx', 'create', '--name', 'webkit-benchmark', '--driver', 'docker-container', '--use')
     images = {'baseline': BASE}
-    metadata = {}
     for variant, compression in [('clean', 'gzip'), ('zstd', 'zstd')]:
         tag = PACKAGE + ':' + os.environ['GITHUB_SHA'] + '-' + variant
         meta = work / (variant + '.json')
@@ -95,12 +90,32 @@ def main():
         'oci:' + str(work / 'repacked'), 'docker://' + tag)
     details = json.loads(run('skopeo', 'inspect', '--authfile', auth, 'docker://' + tag, capture=True))
     images['repack'] = PACKAGE + '@' + details['Digest']
+    return images
+
+
+def main():
+    work = Path('/tmp/webkit-image-benchmark')
+    work.mkdir(exist_ok=False)
+    run('docker', 'pull', BASE)
+    original = config(BASE)
+    reference = fingerprint(BASE)
+    pinned = ROOT / 'benchmark-images.json'
+    images = json.loads(pinned.read_text()) if pinned.exists() else prepare_images(work, original)
+    assert images['baseline'] == BASE
+    metadata = {}
 
     for variant, image in images.items():
         run('docker', 'pull', image)
         actual = config(image)
         assert {k: original.get(k) for k in CONFIG_KEYS} == {k: actual.get(k) for k in CONFIG_KEYS}, variant + '_config_changed'
-        assert fingerprint(image) == reference, variant + '_runtime_changed'
+        if fingerprint(image) != reference:
+            before = {r[0]: r for r in fingerprint(BASE, True)['records']}
+            after = {r[0]: r for r in fingerprint(image, True)['records']}
+            differences = [dict(path=k, before=before.get(k), after=after.get(k))
+                           for k in sorted(before.keys() | after.keys()) if before.get(k) != after.get(k)]
+            Path('image-benchmark-differences.json').write_text(json.dumps(differences, indent=2))
+            print('RUNTIME_DIFFERENCES ' + json.dumps(dict(variant=variant, count=len(differences), sample=differences[:20])), flush=True)
+            raise AssertionError(variant + '_runtime_changed')
         layers = manifest(image)['layers']
         metadata[variant] = dict(image=image, compressed_bytes=sum(x['size'] for x in layers),
                                  layer_count=len(layers), media_types=sorted({x['mediaType'] for x in layers}))
