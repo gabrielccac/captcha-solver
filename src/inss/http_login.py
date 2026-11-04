@@ -82,7 +82,8 @@ def verify_api(session, code, cpf, receipt):
     receipt["api_session_verified"] = True
 
 
-def login(session, cpf, password, api_key, *, receipt=None):
+def login(session, cpf, password, api_key, *, receipt=None, optimize_interactions=False,
+          batch_captcha=False):
     """Populate a caller-owned fresh requests.Session, or raise a sanitized error.
 
     One login per call, without password/token retries. Chrome and Xvfb close
@@ -92,6 +93,12 @@ def login(session, cpf, password, api_key, *, receipt=None):
     receipt.update(success=False, api_session_verified=False, browser_password_posts=0,
                    http_password_posts=0, http_captcha_posts=0, phase_events=[],
                    model=MODEL, reasoning_effort="minimal")
+    interactions=None
+    if optimize_interactions:
+        from captcha.interactions import DynamicInteractions
+        interactions=DynamicInteractions(short_clicks=True)
+    receipt['interaction_profile']='optimized' if optimize_interactions else 'reference'
+    prefetched=None
     started = time.monotonic()
 
     def phase(name):
@@ -120,6 +127,12 @@ def login(session, cpf, password, api_key, *, receipt=None):
             resources.callback(browser.close)
             page = browser.contexts[0].pages[0]
             receipt["browser_version"] = browser.version
+            if batch_captcha:
+                from captcha.prefetch import PrefetchedSolver
+                vision_session=resources.enter_context(requests.Session())
+                prefetched=PrefetchedSolver(vision_session)
+                prefetched.attach(page)
+                resources.callback(prefetched.close)
             expected_state = {}
 
             def track(request):
@@ -137,7 +150,11 @@ def login(session, cpf, password, api_key, *, receipt=None):
             captured = CaptchaHandoff()
             page.route("https://sso.acesso.gov.br/**", captured.intercept)
             phase("cpf")
-            browser_login.submit_cpf(page, f"{cpf[:3]}.{cpf[3:6]}.{cpf[6:9]}-{cpf[9:]}")
+            masked=f"{cpf[:3]}.{cpf[3:6]}.{cpf[6:9]}-{cpf[9:]}"
+            if optimize_interactions:
+                browser_login.submit_cpf(page,masked,short_pauses=True)
+            else:
+                browser_login.submit_cpf(page,masked)
             phase("captcha_engine")
             with TemporaryDirectory(prefix="captcha-widget-") as images:
                 deadline = time.monotonic() + 25
@@ -154,8 +171,11 @@ def login(session, cpf, password, api_key, *, receipt=None):
                         break
                     try:
                         with redirect_stderr(io.StringIO()):
+                            timing={'interactions':interactions} if interactions is not None else {}
+                            if prefetched is not None:
+                                timing['vision_solver']=prefetched
                             done, info = hcaptcha.solve_round(page, images, rnd, MODEL,
-                                "minimal", HANDOFF_SELECTOR, api_key=api_key)
+                                "minimal", HANDOFF_SELECTOR, api_key=api_key, **timing)
                     except PlaywrightError:
                         if captured.captured_at is not None:
                             break
@@ -163,7 +183,13 @@ def login(session, cpf, password, api_key, *, receipt=None):
                     receipt.setdefault("rounds", []).append({key: info[key] for key in
                         ("round", "capture_s", "solve_s", "click_s", "verdict_s")
                         if isinstance(info.get(key), (int, float))})
+                    if interactions is not None:
+                        receipt['selection_waits']=list(interactions.metrics)
+                    if info.get("why")=="selection_not_confirmed":
+                        raise AuthError("captcha_selection_not_confirmed")
                     if "solve_error" in info:
+                        if info['solve_error']=='captcha_images_changed':
+                            raise AuthError('captcha_images_changed')
                         raise AuthError("solver_provider_error")
                     if captured.captured_at is not None or done:
                         break
@@ -208,6 +234,8 @@ def login(session, cpf, password, api_key, *, receipt=None):
     except Exception:
         raise AuthError("login_runtime_error") from None
     finally:
+        if prefetched is not None:
+            receipt['captcha_batch']=prefetched.statistics()
         receipt["elapsed_ms"] = round((time.monotonic() - started) * 1000)
         events = receipt["phase_events"]
         receipt["phase_ms"] = {event["phase"]: (events[i + 1]["elapsed_ms"] if i + 1 < len(events)
@@ -219,6 +247,10 @@ def main():
     parser.error = lambda _: parser.exit(2, "Invalid arguments; credentials belong in the local .env.\n")
     parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--out", type=Path, default=Path("runs/auth-http"))
+    parser.add_argument('--fast-interactions',action='store_true',
+                        help='Confirm captcha selections visually and shorten interaction pauses')
+    parser.add_argument('--batch-captcha',action='store_true',
+                        help='Analyze preloaded challenge images together, with per-round fallback')
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     receipt = {"success": False, "api_session_verified": False}
@@ -227,7 +259,8 @@ def main():
         cpf = "".join(c for c in values.get("GOVBR_CPF", "") if c in "0123456789")
         with requests.Session() as session:
             login(session, cpf, values.get("GOVBR_PASSWORD", ""),
-                  values.get("OPENROUTER_API_KEY", "").strip(), receipt=receipt)
+                  values.get("OPENROUTER_API_KEY", "").strip(), receipt=receipt,
+                  optimize_interactions=args.fast_interactions,batch_captcha=args.batch_captcha)
     except (AuthError, browser_login.LoginError) as error:
         receipt["code"] = error.code
     except FileNotFoundError:
