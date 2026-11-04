@@ -105,11 +105,16 @@ def main():
     assert images['baseline'] == BASE
     assert set(images) == {'baseline', 'clean', 'zstd', 'repack'}
     assert all(re.fullmatch(re.escape(PACKAGE) + r'@sha256:[0-9a-f]{64}', x) for x in images.values())
-    if images['repack'].endswith('515bcec23acc077b0809ddd24af3b68ee49f20f790b7a0c6e2830348b995bcf8'):
+    if not pinned.exists() or images['repack'].endswith('515bcec23acc077b0809ddd24af3b68ee49f20f790b7a0c6e2830348b995bcf8'):
         repaired = PACKAGE + ':' + os.environ['GITHUB_SHA'] + '-repack-repaired'
-        run('docker', 'build', '--file', str(ROOT / 'Dockerfile.repack-repair'), '--tag', repaired, str(work))
-        run('docker', 'push', repaired)
-        images['repack'] = json.loads(run('docker', 'image', 'inspect', repaired, capture=True))[0]['RepoDigests'][0]
+        run('docker', 'buildx', 'create', '--name', 'webkit-repack-publish', '--driver', 'docker-container', '--use')
+        meta = work / 'repack-repaired.json'
+        run('docker', 'buildx', 'build', '--platform', 'linux/amd64', '--provenance=false',
+            '--build-arg', 'RAW_REPACK=' + images['repack'], '--file', str(ROOT / 'Dockerfile.repack-repair'),
+            '--metadata-file', str(meta), '--output',
+            f'type=image,name={repaired},push=true,compression=zstd,compression-level=14,force-compression=true,oci-mediatypes=true',
+            str(work))
+        images['repack'] = PACKAGE + '@' + json.loads(meta.read_text())['containerimage.digest']
     metadata = {}
 
     for variant, image in images.items():

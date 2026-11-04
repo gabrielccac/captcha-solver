@@ -1,6 +1,7 @@
 # docker-repack 0.5.0 drops Unicode characters in these CA paths/links.
+ARG RAW_REPACK=ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:515bcec23acc077b0809ddd24af3b68ee49f20f790b7a0c6e2830348b995bcf8
 FROM ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:9baa1d1d88618dc3d862b03250ca21498ee9e92f3b361d28439680db1149a16c AS original
-FROM ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:515bcec23acc077b0809ddd24af3b68ee49f20f790b7a0c6e2830348b995bcf8
+FROM ${RAW_REPACK}
 USER 0:0
 COPY --from=original /etc/ssl/certs/ /etc/ssl/certs/
 COPY --from=original /usr/share/ca-certificates/ /usr/share/ca-certificates/
