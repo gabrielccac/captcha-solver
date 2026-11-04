@@ -127,6 +127,75 @@ def test_api_rejects_wrong_identity_before_bootstrap():
     session.get.assert_called_once()
 
 
+@pytest.mark.parametrize("failure", [None, "sso_login_required", "authenticated_identity_mismatch",
+                                     "network_error", "runtime_error"])
+def test_http_renewal_preserves_old_state_on_failure_and_never_starts_browser(monkeypatch, failure):
+    real_session = requests.Session
+    original, sso, api = real_session(), real_session(), real_session()
+    original.headers.update({"User-Agent": "fixture-actual-ua", "Authorization": "Bearer expired-fixture",
+                             "miToken": "private-old-mi"})
+    original.cookies.set("fixture_sso", "private-old-cookie", domain="sso.acesso.gov.br", secure=True)
+    before_headers, before_cookies = dict(original.headers), original.cookies.get_dict()
+    clients = iter([sso, api])
+    monkeypatch.setattr(http_login.requests, "Session", lambda: next(clients))
+    browser = Mock(side_effect=AssertionError("renewal cannot start browser"))
+    monkeypatch.setattr(http_login, "ManagedBrowser", browser)
+    auth = Mock(authorization_code="fresh-fixture-code")
+
+    def authorize():
+        assert "Authorization" not in sso.headers and "miToken" not in sso.headers
+        assert sso.headers["User-Agent"] == "fixture-actual-ua"
+        assert sso.cookies.get("fixture_sso") == "private-old-cookie"
+        sso.cookies.set("fixture_sso", "private-rotated-cookie", domain="sso.acesso.gov.br", secure=True)
+        if failure == "sso_login_required":
+            raise AuthError(failure)
+        if failure == "network_error":
+            raise requests.Timeout("private-url-cookie-details")
+        if failure == "runtime_error":
+            raise RuntimeError("private-url-cookie-details")
+        return [("https://meu.inss.gov.br/", 200)]
+
+    auth.resume.side_effect = authorize
+    monkeypatch.setattr(http_login, "GovBrAuth", lambda *a, **kw: auth)
+
+    def verify(client, code, cpf, receipt):
+        assert client is api and code == "fresh-fixture-code"
+        if failure == "authenticated_identity_mismatch":
+            raise AuthError(failure)
+        api.headers.update({"Authorization": "Bearer private-new-access", "miToken": "private-new-mi"})
+        receipt.update(authenticated_endpoint_http_status=200, api_session_verified=True)
+
+    monkeypatch.setattr(http_login, "verify_api", verify)
+    receipt = {}
+    if failure is None:
+        http_login.renew(original, "00000000000", receipt=receipt)
+        assert original.headers["Authorization"] == "Bearer private-new-access"
+        assert original.headers["miToken"] == "private-new-mi"
+        assert original.cookies.get("fixture_sso") == "private-rotated-cookie"
+        assert receipt["success"] and receipt["access_token_changed"]
+    else:
+        code = "renewal_runtime_error" if failure == "runtime_error" else failure
+        with pytest.raises(AuthError, match="^" + code + "$"):
+            http_login.renew(original, "00000000000", receipt=receipt)
+        assert dict(original.headers) == before_headers
+        assert original.cookies.get_dict() == before_cookies
+        assert not receipt["success"]
+    browser.assert_not_called()
+    assert receipt["http_password_posts"] == receipt["browser_password_posts"] == 0
+    assert "private" not in json.dumps(receipt)
+    original.close()
+
+
+def test_http_renewal_requires_sso_context_before_network(monkeypatch):
+    with requests.Session() as session:
+        session.headers.update(Authorization="Bearer fixture", miToken="fixture")
+        factory = Mock()
+        monkeypatch.setattr(http_login.requests, "Session", factory)
+        with pytest.raises(AuthError, match="sso_session_missing"):
+            http_login.renew(session, "00000000000")
+        factory.assert_not_called()
+
+
 @pytest.mark.parametrize("url", ["http://sso.acesso.gov.br/login",
     "https://sso.acesso.gov.br.evil.invalid/login", "https://sso.acesso.gov.br:444/login",
     "https://private@sso.acesso.gov.br/login"])
