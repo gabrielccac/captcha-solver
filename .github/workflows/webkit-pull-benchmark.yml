@@ -8,6 +8,7 @@ on:
       - experiments/gha-webkit/benchmark_pull.py
       - experiments/gha-webkit/runtime_fingerprint.py
       - experiments/gha-webkit/benchmark-images.json
+      - experiments/gha-webkit/Dockerfile.repack-repair
 permissions:
   contents: read
   packages: read

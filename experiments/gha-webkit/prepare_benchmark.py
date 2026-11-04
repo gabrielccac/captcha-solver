@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tarfile
@@ -102,6 +103,13 @@ def main():
     pinned = ROOT / 'benchmark-images.json'
     images = json.loads(pinned.read_text()) if pinned.exists() else prepare_images(work, original)
     assert images['baseline'] == BASE
+    assert set(images) == {'baseline', 'clean', 'zstd', 'repack'}
+    assert all(re.fullmatch(re.escape(PACKAGE) + r'@sha256:[0-9a-f]{64}', x) for x in images.values())
+    if images['repack'].endswith('515bcec23acc077b0809ddd24af3b68ee49f20f790b7a0c6e2830348b995bcf8'):
+        repaired = PACKAGE + ':' + os.environ['GITHUB_SHA'] + '-repack-repaired'
+        run('docker', 'build', '--file', str(ROOT / 'Dockerfile.repack-repair'), '--tag', repaired, str(work))
+        run('docker', 'push', repaired)
+        images['repack'] = json.loads(run('docker', 'image', 'inspect', repaired, capture=True))[0]['RepoDigests'][0]
     metadata = {}
 
     for variant, image in images.items():
@@ -121,6 +129,7 @@ def main():
                                  layer_count=len(layers), media_types=sorted({x['mediaType'] for x in layers}))
     report = dict(images=metadata, runtime_fingerprint=reference,
                   repack_version='0.5.0', repack_archive_sha256=REPACK_SHA,
+                  repack_unicode_cert_paths_restored=True,
                   baseline=BASE, excluded_cleanup=['/var/lib/apt/lists', '/var/cache/apt'])
     Path('image-benchmark-build.json').write_text(json.dumps(report, indent=2))
     with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
