@@ -1,18 +1,21 @@
 """Send environment secrets to disposable worker stdin, then publish safe metrics."""
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import threading
 
 keys = ('GOVBR_CPF','GOVBR_PASSWORD','OPENROUTER_API_KEY')
+image = Path('experiments/gha-webkit/image.ref').read_text().strip()
+assert re.fullmatch(r'ghcr\.io/gabrielccac/captcha-solver-webkit-smoke@sha256:[0-9a-f]{64}',image)
 values = {key:os.environ.pop(key) for key in keys}
 assert all(values.values())
 name = 'inss-webkit-smoke'
 command = ['docker','run','--rm','--init','-i','--name',name,'--log-driver','none',
     '--read-only','--cpus','1','--memory','1400m','--memory-swap','1400m','--pids-limit','320',
     '--shm-size','128m','--tmpfs','/tmp:rw,nosuid,size=512m,mode=1777',
-    '--security-opt','seccomp=experiments/gha-webkit/seccomp.json','inss-webkit-gha:test']
+    '--security-opt','seccomp=experiments/gha-webkit/seccomp.json',image]
 # No secrets in Docker arguments, environment, logs, output files or Actions inputs.
 process = subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
     text=True,encoding='utf-8')
