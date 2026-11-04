@@ -1,0 +1,47 @@
+name: Diagnose runner-specific filesystem metadata
+on:
+  push:
+    branches: [test/gha-webkit-20261104]
+    paths: [.github/workflows/webkit-runtime-diagnostic.yml]
+permissions:
+  contents: read
+  packages: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        trial: [1, 2, 3, 4]
+    env:
+      DOCKER_CONFIG: /tmp/webkit-ghcr-auth
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Registry authentication
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Record baseline files and injected mounts without credentials
+        run: |
+          python3 - <<'PY'
+          import subprocess,json,pathlib
+          image='ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:9baa1d1d88618dc3d862b03250ca21498ee9e92f3b361d28439680db1149a16c'
+          subprocess.run(['docker','pull',image],check=True)
+          cmd=['docker','run','--rm','-i','--network','none','--read-only','--user','0:0','--entrypoint','python',image,'-']
+          code=pathlib.Path('experiments/gha-webkit/runtime_fingerprint.py').read_text()
+          result=json.loads(subprocess.check_output(cmd+['--records'],input=code,text=True))
+          result['mounts']=subprocess.check_output(cmd,input="print(open('/proc/self/mountinfo').read())",text=True)
+          result['cpu']=next(x for x in pathlib.Path('/proc/cpuinfo').read_text().splitlines() if x.startswith('model name'))
+          pathlib.Path('runtime-snapshot.json').write_text(json.dumps(result))
+          print(json.dumps({k:result[k] for k in ['sha256','entries','cpu']}))
+          PY
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: runtime-snapshot-${{ matrix.trial }}
+          path: runtime-snapshot.json
+          retention-days: 1
+      - name: Remove registry login
+        if: always()
+        run: docker logout ghcr.io
