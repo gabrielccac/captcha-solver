@@ -2,9 +2,10 @@
 
 Revisado em 2026-11-04 a partir do código e das validações locais do projeto.
 
-**O comportamento comprovado é reutilizar uma sessão ainda válida e obter novos
-tokens por um novo login quando necessário. Não há um fluxo de `refresh_token`
-validado que renove o token principal sem autenticação.**
+**Foi comprovado o reuso de tokens válidos e a emissão imediata de um novo token
+principal por HTTP com cookies SSO preservados, sem navegador ou novo envio de
+credenciais. Não há fluxo de `refresh_token` validado nem garantia de renovação
+após a expiração ou por tempo indeterminado.**
 
 ## O que está publicado e o que ainda é local
 
@@ -51,19 +52,23 @@ Há dois mecanismos a distinguir:
   As ocorrências de `refreshToken` no JavaScript do portal capturado em
   2026-10-27 são da biblioteca de instalação do Firebase; não comprovam refresh
   do `access_token` do Meu INSS/GOV.BR.
-- **Nova autorização com cookies SSO:** uma sessão HTTP que ainda conserva
-  cookies autenticados poderia, em tese, solicitar uma nova autorização e receber
-  outro código OAuth sem pedir senha/captcha. Não testamos esse comportamento no
-  GOV.BR nem por quanto tempo esses cookies seriam aceitos. O cache local
-  descarta a sessão expirada e inicia o login híbrido; não implementa essa via.
+- **Nova autorização com cookies SSO:** o relatório de 2026-10-30 registra uma
+  nova autorização e troca de código somente por HTTP, com o navegador encerrado,
+  nenhum novo envio de credenciais e nenhuma chamada adicional ao solver.
+  O novo `ifs_auth` foi aceito em uma consulta autenticada HTTP 200 junto com o
+  `miToken` existente. O teste foi imediato, antes da expiração; não determina
+  por quanto tempo os cookies SSO seriam aceitos. O cache local descarta a sessão
+  expirada e inicia o login híbrido; não implementa essa via de reautorização.
 
-Para comprovar a segunda hipótese, um teste precisa preservar a sessão HTTP em
-memória, solicitar uma autorização com novo `state`/`nonce`, verificar o callback,
-trocar o novo código e conferir identidade, novos `iat`/`exp` e HTTP 200 usando
-os novos tokens. Um HTTP 200 com os tokens antigos, ou apenas outro `miToken`,
-não demonstra que o token principal foi renovado. Se o SSO voltar a exigir
-senha, captcha, consentimento ou OTP, o teste deve registrar essa exigência;
-não pode classificá-la como renovação silenciosa bem-sucedida.
+Essa reautorização não estendeu a validade do `miToken`. Na mesma execução,
+o bootstrap HTTP sem um `miToken` existente retornou 400; não foi demonstrada
+a renovação dele após expirar.
+
+Uma implementação deve preservar a sessão HTTP, solicitar uma autorização com
+novo `state`/`nonce`, verificar o callback, trocar o novo código e conferir
+identidade, novos `iat`/`exp` e HTTP 200 usando o token emitido. Se o SSO voltar
+a exigir senha, captcha, consentimento ou OTP, registrar essa exigência em vez
+de classificar o resultado como renovação silenciosa bem-sucedida.
 
 `token_claims()` apenas decodifica o JWT e não verifica sua assinatura.
 `token_validity()` expõe emissão, expiração e segundos restantes sem retornar os
@@ -142,14 +147,25 @@ Na validação real de 2026-11-03, duas chamadas no mesmo processo MCP local:
 
 O reuso foi observado ao vivo. Expiração próxima, 401/403, troca de senha,
 isolamento entre CPFs e limite do cache foram verificados em testes simulados
-de `tests/test_mcp.py` no checkout local. **Não houve teste real aguardando a
-expiração de uma hora, nem comprovação de refresh silencioso.**
+de `tests/test_mcp.py` no checkout local.
+
+Os relatórios locais de 2026-10-30 também registram:
+
+| Execução em `runs/` | Resultado observado |
+| --- | --- |
+| `sso-browser-restart-20261030/summary.json` | Docker local com Chrome/Xvfb; após encerrar o navegador, reautorização HTTP imediata emitiu outro `ifs_auth` de 3.600 segundos e a API retornou 200 usando o `miToken` existente |
+| `sso-idle-preserved-20261030T191116Z/natural-expiry-probe/summary.json` | Após cerca de 71 minutos sem uso, o token antigo retornou 401; a tentativa HTTP não obteve código OAuth, e a comparação em navegador exigiu autenticação interativa |
+
+O segundo teste não determina o instante exato de expiração do SSO e não valida
+renovações preventivas repetidas durante várias horas. **Há evidência de
+reautorização HTTP imediata, mas a recuperação após expiração falhou nessa
+amostra; esse mecanismo não está integrado ao cache do MCP local.**
 
 Os arquivos das execuções ficam apenas em `runs/`, ignorado pelo Git, e não são
 necessários para instalar o projeto. Este documento não contém credenciais,
 tokens, protocolos, números de benefícios ou dados clínicos.
 
-Antes de implementar uma renovação diferente do novo login, ainda é necessário
-observar uma troca real de refresh, verificar seu contrato e confirmar o acesso
-com o token emitido. Não se deve reutilizar código OAuth ou token de captcha
-para tentar prolongar uma sessão.
+Antes de integrar a reautorização HTTP, reproduzir o teste no fluxo atual e
+validar seus limites ao longo do tempo, incluindo a validade do `miToken`.
+Não se deve reutilizar código OAuth ou token de captcha para tentar prolongar
+uma sessão.
