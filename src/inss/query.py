@@ -1,5 +1,6 @@
 """Shared CLI/MCP query: browser-to-HTTP login, selected APIs, partial results."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 import json
 import os
@@ -66,11 +67,48 @@ def query(cpf, password, api_key, output_dir, *, years=1, start_date="", end_dat
         extracting = time.monotonic()
         auth = session.headers["Authorization"].removeprefix("Bearer ")
         mi = session.headers["miToken"]
-        data = extract(cpf, auth, mi, windows if include_payments else [],
-                       session=session, include_userinfo=False)
-        data.update(userinfo_status=receipt["authenticated_endpoint_http_status"],
-                    payments_requested=include_payments, letters_requested=bool(include_letters or selected),
-                    concession_letters=[], benefits=[], medical_reports=[], errors=[])
+        component_ms = {}
+
+        def measured(name, action, *args, **kwargs):
+            started = time.monotonic()
+            try:
+                return action(*args, **kwargs)
+            finally:
+                component_ms[name] = round((time.monotonic() - started) * 1000)
+
+        # Coordinators wait on the shared request pool; they never occupy its slots.
+        # Only the selected medical request uses session.get; other jobs copy headers.
+        with ThreadPoolExecutor(max_workers=5) as requests_pool, ThreadPoolExecutor(max_workers=2) as groups:
+            payment_job = groups.submit(measured, "payments_ms", extract, cpf, auth, mi,
+                windows if include_payments else [], session=session, include_userinfo=False,
+                executor=requests_pool)
+            letter_job = (groups.submit(measured, "letters_ms", concession_letters, auth, mi,
+                output_dir, benefit_numbers=selected if selected else None, session=session,
+                executor=requests_pool) if include_letters or selected else None)
+            report_job = (requests_pool.submit(measured, "medical_report_ms", download_medical_report,
+                auth, mi, medical_report_nb, output_dir, session=session) if medical_report_nb else None)
+            data = payment_job.result()
+            data.update(userinfo_status=receipt["authenticated_endpoint_http_status"],
+                        payments_requested=include_payments, letters_requested=bool(include_letters or selected),
+                        concession_letters=[], benefits=[], medical_reports=[], errors=[])
+            if letter_job is not None:
+                try:
+                    data["concession_letters"] = letter_job.result()
+                    for letter in data["concession_letters"]:
+                        if letter.get("error") or letter.get("parse_error"):
+                            data["errors"].append({"component": "concession_letters", "code": "document_incomplete"})
+                except ValueError:
+                    data["errors"].append({"component": "concession_letters", "code": "benefit_outside_session"})
+                except OSError:
+                    data["errors"].append({"component": "concession_letters", "code": "local_io_error"})
+            if report_job is not None:
+                try:
+                    data["medical_report"] = report_job.result()
+                except ValueError:
+                    data["medical_report"] = {"benefit_number": medical_report_nb, "http_status": None,
+                        "file": None, "error": "Benefit not listed for medical reports in this session"}
+                if data["medical_report"].get("error"):
+                    data["errors"].append({"component": "medical_report", "code": "document_unavailable"})
         for window in data["windows"]:
             if window.get("error"):
                 data["errors"].append({"component": "payments", "window": window["window"],
@@ -82,25 +120,6 @@ def query(cpf, password, api_key, output_dir, *, years=1, start_date="", end_dat
             data["benefits_error"] = "Session benefit list unavailable"
             data["medical_reports_error"] = "Medical report benefit list unavailable"
             data["errors"].append({"component": "benefits", "code": "invalid_benefit_list"})
-        if include_letters or selected:
-            try:
-                data["concession_letters"] = concession_letters(auth, mi, output_dir,
-                    benefit_numbers=selected if selected else None, session=session)
-                for letter in data["concession_letters"]:
-                    if letter.get("error") or letter.get("parse_error"):
-                        data["errors"].append({"component": "concession_letters", "code": "document_incomplete"})
-            except ValueError:
-                data["errors"].append({"component": "concession_letters", "code": "benefit_outside_session"})
-            except OSError:
-                data["errors"].append({"component": "concession_letters", "code": "local_io_error"})
-        if medical_report_nb:
-            try:
-                data["medical_report"] = download_medical_report(auth, mi, medical_report_nb, output_dir, session=session)
-            except ValueError:
-                data["medical_report"] = {"benefit_number": medical_report_nb, "http_status": None,
-                    "file": None, "error": "Benefit not listed for medical reports in this session"}
-            if data["medical_report"].get("error"):
-                data["errors"].append({"component": "medical_report", "code": "document_unavailable"})
         try:
             data["token_validity"] = token_validity(auth, mi)
         except (ValueError, TypeError, OverflowError, OSError):
@@ -113,6 +132,9 @@ def query(cpf, password, api_key, output_dir, *, years=1, start_date="", end_dat
             complete=data["complete"], partial=data["partial"],
             code="ok" if data["complete"] else "partial_results")
         data["timings"] = {key: receipt[key] for key in ("login_ms", "extraction_ms", "total_ms")}
+        data["timings"].update(component_ms)
+        data["login_timing"] = {key: receipt[key] for key in
+            ("phase_ms", "rounds", "selection_waits", "captcha_batch") if key in receipt}
         return data
 
 

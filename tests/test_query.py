@@ -3,7 +3,9 @@ import base64
 from datetime import date, datetime, timedelta
 import io
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier, Event, Lock
 from unittest.mock import Mock
 
 import pytest
@@ -235,3 +237,55 @@ def test_cli_does_not_apply_bound_local_password_to_another_cpf(monkeypatch, tmp
     assert query.main() == 3
     service.assert_not_called()
     assert json.loads(capsys.readouterr().out)["code"] == "local_credentials_identity_mismatch"
+
+
+def test_payment_and_document_requests_overlap_in_the_same_query(monkeypatch, tmp_path, login):
+    rendezvous = Barrier(2, timeout=5)
+    def get(url, **kwargs):
+        rendezvous.wait()
+        if "historicocreditos" in url:
+            return response({"creditosTO": [{"idCredito": 1}]})
+        return response(status=404)
+    monkeypatch.setattr(session.requests, "get", get)
+    data = query.query("12345678901", "fixture-secret", "fixture-key", tmp_path,
+                       letter_benefit_numbers=["1234567890"])
+    assert data["creditos"] == [{"idCredito": 1}]
+    assert data["concession_letters"][0]["http_status"] == 404
+    assert data["timings"]["payments_ms"] >= 0
+    assert data["timings"]["letters_ms"] >= 0
+
+
+def test_all_payment_and_letter_requests_share_a_five_worker_bound(monkeypatch, tmp_path):
+    ready, release = Event(), Event()
+    lock = Lock()
+    active = peak = 0
+    def authenticate(client, *args, receipt, **kwargs):
+        client.headers.update(Authorization="Bearer " + jwt(sub="12345678901"),
+            miToken=jwt(nbs=[str(i) for i in range(8)], nbsJson={"listaBeneficios": []}))
+        receipt.update(success=True, elapsed_ms=0, authenticated_endpoint_http_status=200)
+    def get(url, **kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            if active == 5:
+                ready.set()
+        try:
+            assert release.wait(5)
+            return response({"creditosTO": []}) if "historicocreditos" in url else response(status=404)
+        finally:
+            with lock:
+                active -= 1
+    monkeypatch.setattr(query, "login", authenticate)
+    monkeypatch.setattr(session.requests, "get", get)
+    with ThreadPoolExecutor(max_workers=1) as caller:
+        future = caller.submit(query.query, "12345678901", "fixture-secret", "fixture-key", tmp_path,
+                               years=5, include_letters=True)
+        try:
+            assert ready.wait(5)
+            assert peak == 5
+        finally:
+            release.set()
+        result = future.result(timeout=10)
+    assert peak == 5
+    assert len(result["windows"]) == 5 and len(result["concession_letters"]) == 8

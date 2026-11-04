@@ -91,6 +91,22 @@ persistence. These are individual-call observations, not a production benchmark.
 Compare identical selectors, account/runtime and success/partial states over
 multiple runs before claiming speed improvements; report distributions and errors.
 
+Payment windows, concession letters and the selected medical report now overlap
+after login. All use one shared five-worker request pool; separate coordinators
+wait outside that pool so parent jobs cannot exhaust its slots. Parallel jobs
+copy authentication headers; only the single selected medical request uses the
+caller-owned HTTP session for transport. No session is used for concurrent HTTP
+requests. `payments_ms`, `letters_ms` and `medical_report_ms` measure overlapping
+components and must not be summed. Each concession result also records download
+and PDF parsing milliseconds. `login_timing` exposes only sanitized phase/round,
+visual-confirmation and batch/cache/fallback counters, never predictions or tokens.
+
+Vision requests reuse a dedicated connection session between rounds, including
+the non-batch path. This session is separate from the authenticated gov.br
+session. Browser flags, context, typing/click cadence, model and image encoding
+are unchanged. To request the tested fast profile, explicitly set both
+`fast_interactions=True` and `batch_captcha=True` in the MCP call (or both CLI flags).
+
 ## Concurrency limits
 
 The existing lock still serializes calls **within one MCP process**. Independent
@@ -118,7 +134,32 @@ Default document-free queries, matched baseline runs and concurrent production
 load were not measured live in this check. Offline tests cover selectors,
 timeout/HTTP/malformed-JSON isolation, stdin/file credential precedence and
 document persistence failure without discarding payments.
-The full offline regression passed 196 tests on Windows and 193 tests plus
+The full offline regression passed 198 tests on Windows and 195 tests plus
 18 subtests on Linux/Docker, with three optional Linux tests skipped. POSIX mode
 assertions remain enforced on Linux; Windows checks the same file behavior
 without asserting Unix permission bits.
+
+Four further installed-MCP calls compared the sequential-group version at
+`a888dd8` against shared-pool overlap, with the same runtime/account/selectors
+and **fast interactions plus batching enabled in every call**:
+
+| Version | Login (s), each run | Extraction (s), each run | Full MCP call (s), each run |
+| --- | --- | --- | --- |
+| Sequential groups | 26.156; 24.502 | 3.112; 3.435 | 30.804; 29.521 |
+| Shared pool | 43.129; 32.006 | 2.391; 2.643 | 47.001; 36.209 |
+
+The observed median extraction changed from 3.274 s to 2.517 s (23.1% lower),
+but full-call latency did **not** improve in this small sample. Vision call times
+were 5.0/3.8 s in the controls, 22.8 s in one parallel run and 6.8 + 4.4 s in the
+other. Three calls reused one batch answer across both rounds; one fell back
+after pixel mapping became unavailable. Each call returned the same payment
+records, document count and document-error classes; PDFs survived worker cleanup.
+All were partial document results, as in the original check. PDF parsing in the
+new samples took 15..75 ms per available PDF; downloads dominated extraction.
+
+The earlier 15.610 s extraction was not a fixed wait: even the unchanged control
+subsequently took 3.1..3.4 s. Distinct challenges/provider latency and two samples
+per version prevent attributing a general speed gain or promising a fixed login
+time. The shared-pool overlap and five-request cap are also checked offline with
+barriers/events; legacy standalone helpers still own their own pool when called
+without a supplied executor.

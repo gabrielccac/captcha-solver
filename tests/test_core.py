@@ -112,13 +112,15 @@ class CoreTests(unittest.TestCase):
             def wait_for_timeout(self, ms):
                 pass
 
+        transport = Mock()
         with tempfile.TemporaryDirectory() as out, \
-             patch.object(hcaptcha, "solve", return_value=[]), \
+             patch.object(hcaptcha, "solve", return_value=[]) as model, \
              patch.object(hcaptcha, "click") as click:
-            done, info = hcaptcha.solve_round(Page(), out, 0, "test")
+            done, info = hcaptcha.solve_round(Page(), out, 0, "test", vision_session=transport)
         self.assertFalse(done)
         self.assertEqual(info["why"], "empty-picks")
         click.assert_not_called()
+        self.assertIs(model.call_args.kwargs["session"], transport)
 
     def test_capture_retry_does_not_repeat_partial_clicks(self):
         page = Mock()
