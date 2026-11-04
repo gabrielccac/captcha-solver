@@ -231,7 +231,7 @@ def main():
                 data = extract(cpf_digits, toks["auth"], toks["mi"])
                 receipt["stages"]["extract_s"] = round(time.time() - t0, 1)
                 if (data["userinfo_status"] != 200 or
-                        any(w["status"] not in (200, 404) for w in data["windows"])):
+                        any(w["status"] not in (200, 404) or w.get("error") for w in data["windows"])):
                     receipt["fatal"] = "API requests failed"
                     receipt["userinfo_status"] = data["userinfo_status"]
                     receipt["windows"] = [

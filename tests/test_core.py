@@ -272,8 +272,14 @@ class CoreTests(unittest.TestCase):
             def json(self):
                 return self.body
 
+            def close(self):
+                pass
+
         class Session:
             headers = {"User-Agent": "test"}
+
+            def close(self):
+                pass
 
             def get(self, *args, **kwargs):
                 return Response()

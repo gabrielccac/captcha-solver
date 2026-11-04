@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -30,7 +31,8 @@ class LetterTests(unittest.TestCase):
             for letter in letters:
                 path = Path(out) / letter["file"]
                 self.assertEqual(path.read_bytes(), pdf)
-                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                if os.name == "posix":
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_failed_and_non_pdf_responses_are_reported_without_files(self):
         for response in (Mock(status_code=404), Mock(status_code=200, content=b'{"error":"unavailable"}'),
