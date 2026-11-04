@@ -78,6 +78,25 @@ duas rodadas visuais. Login interno 34,19 s; worker com validação independente
 39,92 s; job 68 s; evento até conclusão 72 s. O ambiente temporário de segredos
 foi removido e nenhum artefato de autenticação foi publicado.
 
+[Login real com o repack final](https://github.com/gabrielccac/captcha-solver/actions/runs/41932299630):
+foram duas tentativas independentes, cada uma com sessão limpa e sem retry dentro
+da aplicação. A primeira parou com `captcha_selection_not_confirmed`, antes de
+qualquer POST de captcha/senha por HTTP; a segunda chamada de visão levou 18,3 s.
+A segunda tentativa passou: captcha aceito, senha enviada uma vez por HTTP,
+callback recebido, troca de código HTTP 200 e endpoint INSS independente HTTP
+200. Access token e miToken estavam presentes; o access tinha 3.598 s restantes.
+
+Na tentativa bem-sucedida: login interno 39,65 s; worker 40,71 s; job 62 s;
+início da tentativa até conclusão 68 s; CPU do worker 22,913 CPU-s; pico de memória
+604,3 MiB. Houve duas rodadas visuais, uma chamada de visão em lote e um acerto
+de cache. O navegador foi liberado aos 34,45 s, antes do POST de senha por HTTP.
+Os dois ambientes temporários de segredos foram removidos, sem artefatos de
+autenticação publicados. O digest final está fixado em `image.ref`.
+
+O resultado real do repack foi, portanto, **1 sucesso em 2 tentativas**. Isso
+valida o funcionamento dessa imagem, mas não uma taxa de sucesso ou ganho de
+tempo total de login. O ganho medido de 31,9% se refere à preparação offline.
+
 ### Execuções exploratórias e limites
 
 As execuções que falharam não foram misturadas com as 20 medições finais:
