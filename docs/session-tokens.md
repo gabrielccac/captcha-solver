@@ -38,6 +38,33 @@ O código usa o `exp` recebido em cada token. A validade útil é limitada pelo
 primeiro que expira: um `miToken` de 24 horas não torna utilizável um
 `access_token` que já expirou após uma hora.
 
+## Renovação somente por HTTP, sem reabrir o navegador
+
+Esse é um objetivo diferente de reutilizar tokens válidos ou de enviar a senha
+por HTTP no primeiro login. O navegador ser fechado antes do POST de senha
+comprova apenas a segunda metade do login inicial; não comprova renovação futura.
+
+Há dois mecanismos a distinguir:
+
+- **Refresh de token:** receber novos tokens usando uma credencial de refresh.
+  Não há endpoint/contrato desse fluxo validado ou utilizado no código atual.
+  As ocorrências de `refreshToken` no JavaScript do portal capturado em
+  2026-10-27 são da biblioteca de instalação do Firebase; não comprovam refresh
+  do `access_token` do Meu INSS/GOV.BR.
+- **Nova autorização com cookies SSO:** uma sessão HTTP que ainda conserva
+  cookies autenticados poderia, em tese, solicitar uma nova autorização e receber
+  outro código OAuth sem pedir senha/captcha. Não testamos esse comportamento no
+  GOV.BR nem por quanto tempo esses cookies seriam aceitos. O cache local
+  descarta a sessão expirada e inicia o login híbrido; não implementa essa via.
+
+Para comprovar a segunda hipótese, um teste precisa preservar a sessão HTTP em
+memória, solicitar uma autorização com novo `state`/`nonce`, verificar o callback,
+trocar o novo código e conferir identidade, novos `iat`/`exp` e HTTP 200 usando
+os novos tokens. Um HTTP 200 com os tokens antigos, ou apenas outro `miToken`,
+não demonstra que o token principal foi renovado. Se o SSO voltar a exigir
+senha, captcha, consentimento ou OTP, o teste deve registrar essa exigência;
+não pode classificá-la como renovação silenciosa bem-sucedida.
+
 `token_claims()` apenas decodifica o JWT e não verifica sua assinatura.
 `token_validity()` expõe emissão, expiração e segundos restantes sem retornar os
 tokens. O teste de acesso real é uma resposta autenticada HTTP 200 por TLS.
