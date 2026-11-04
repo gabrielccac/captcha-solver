@@ -1,0 +1,82 @@
+name: Compare cold WebKit image preparation
+on:
+  push:
+    branches: [test/gha-webkit-20261104]
+    paths:
+      - .github/workflows/webkit-pull-benchmark.yml
+      - experiments/gha-webkit/prepare_benchmark.py
+      - experiments/gha-webkit/benchmark_pull.py
+      - experiments/gha-webkit/runtime_fingerprint.py
+permissions:
+  contents: read
+  packages: read
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DOCKER_CONFIG: /tmp/webkit-ghcr-auth
+    outputs:
+      images: ${{ steps.prepare.outputs.images }}
+      fingerprint: ${{ steps.prepare.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Install OCI copy tool for image preparation only
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends skopeo
+      - name: Registry authentication
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Prepare immutable variants and compare runtime files and configuration
+        id: prepare
+        run: python3 experiments/gha-webkit/prepare_benchmark.py
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        if: always()
+        with:
+          name: image-benchmark-build
+          path: image-benchmark-build.json
+          retention-days: 7
+      - name: Remove registry login
+        if: always()
+        run: docker logout ghcr.io
+  measure:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        trial: [1, 2, 3, 4, 5]
+        variant: [baseline, clean, zstd, repack]
+    env:
+      DOCKER_CONFIG: /tmp/webkit-ghcr-auth
+      WEBKIT_IMAGE: ${{ fromJSON(needs.prepare.outputs.images)[matrix.variant] }}
+      EXPECTED_FINGERPRINT: ${{ needs.prepare.outputs.fingerprint }}
+      VARIANT: ${{ matrix.variant }}
+      TRIAL: ${{ matrix.trial }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Registry authentication
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Measure cold pull, authentication tests and browser readiness
+        run: python3 experiments/gha-webkit/benchmark_pull.py
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        if: always()
+        with:
+          name: image-benchmark-${{ matrix.variant }}-${{ matrix.trial }}
+          path: image-benchmark-result.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove registry login
+        if: always()
+        run: docker logout ghcr.io
