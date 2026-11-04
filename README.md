@@ -198,3 +198,11 @@ the credit-window statuses and returned records against the known baseline.
 ### Experimento Android sem solver
 
 O teste isolado de login nativo com CDP está em [experiments/android_cdp](experiments/android_cdp/README.md). Ele não altera o fluxo padrão e interrompe diante de captcha visual ou verificação em duas etapas.
+
+## API e MCP remoto
+
+O serviço `inss-hosted` separa credenciamento enfileirado, sessão e consultas HTTP.
+REST e MCP Streamable HTTP compartilham sessões criptografadas, renovação SSO e
+um catálogo de endpoints permitidos. Veja o [contrato e a implantação](docs/hosted-api.md)
+e os arquivos em `deploy/`. A imagem fixa o Chrome e as fontes validados; não usa
+o Selenium/Chromium de outros serviços do host.
