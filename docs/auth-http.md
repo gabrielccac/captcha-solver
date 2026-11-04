@@ -57,6 +57,9 @@ inss-login-http --env-file .env --out runs/auth-http
 
 ## Reuse a session in memory
 
+See [session validity, reuse and reauthentication](session-tokens.md) for the
+observed token lifetimes, validated behavior and the limits of token renewal.
+
 ```python
 import requests
 from inss.http_login import login
