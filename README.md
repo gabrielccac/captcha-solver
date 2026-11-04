@@ -5,28 +5,32 @@ solver. `src/inss/` handles the GOV.BR login steps and the Meu INSS customer
 information and credit requests. `src/comprasnet/` validates the same GOV.BR
 login on Comprasnet. `runner.py` keeps the existing INSS command.
 
-The optional [`inss-login-http` flow](docs/auth-http.md) uses the same browser for
-bootstrap, CPF and captcha, then closes it and completes password/API login over
-HTTP. It supports Docker/Xvfb on Windows and keeps credentials/session tokens out
-of receipts and Git. Optional `--fast-interactions` and `--batch-captcha` enable
-visual readiness and preloaded-image batching with per-round fallback. See the
-linked guide for setup and validation limits.
+[`inss-query` and the MCP](docs/inss-query.md) share the browser-to-HTTP login:
+Chrome handles bootstrap, CPF and captcha, then closes before password/API login.
+The default query requests one recent API year of payments and no PDFs. Select
+dates, omit payment history or request specific documents. Failed windows and
+documents are reported alongside successful results. The login-only
+[`inss-login-http` command](docs/auth-http.md) remains available separately.
 
 ## Setup
 
 Install `uv`, Google Chrome (`/usr/bin/google-chrome`), Xvfb, and `poppler-utils`
 (provides `pdftotext` for parsing concession letters). Copy
-`.env.example` to `.env` and set `GOVBR_PASSWORD` and `OPENROUTER_API_KEY`
+`.env.example` to `.env` and set `GOVBR_CPF`, `GOVBR_PASSWORD` and `OPENROUTER_API_KEY`
 locally. `.env`, browser profiles, and run outputs are ignored by Git.
 
 ## Run
 
 ```bash
-uv run python runner.py --cpf YOUR_CPF --out runs/customer \
-  --model meta/muse-spark-1.3-contributor --reasoning-effort minimal
+uv run inss-query --env-file .env --out runs/customer
 ```
 
-The CLI also accepts `--profile-dir`, `--cdp-port`, `--cdp-url`, and `--max-rounds`.
+Set `GOVBR_CPF`, `GOVBR_PASSWORD` and `OPENROUTER_API_KEY` in the ignored local
+`.env`, or use the supported in-memory credential input. `inss-extract` is an
+alias for `inss-query`. The original browser workflow remains available through
+`inss-browser-legacy` and `python runner.py`; the following browser-specific
+options and consent behavior describe that legacy command.
+The legacy CLI accepts `--profile-dir`, `--cdp-port`, `--cdp-url`, and `--max-rounds`.
 If GOV.BR requests consent for `Meu INSS - Site`, the workflow clicks **Autorizar**
 by default, granting the personal-data sharing shown on that screen. It then
 waits for the Meu INSS domain before collecting tokens and querying the APIs.
@@ -52,20 +56,25 @@ challenge images under `--out`; it does not retrieve account data.
 
 Run `uv sync`, then register the absolute path to `.venv/bin/inss-mcp` as a
 **stdio** MCP server in your chat client. It exposes `get_inss_payments(cpf,
-password)`. Both values come from each tool call; the password is passed to the
-login subprocess for that call and is not added to `.env`, command arguments,
-or the tool result. The server uses a fresh temporary browser profile and
+password="", years=1, ...)`. Supply the password per call or omit it to use
+`GOVBR_PASSWORD` from the local environment/file. Per-call credentials reach the
+shared `inss.query` worker over stdin and are not added to files, environment
+variables, command arguments or tool results. The server uses a fresh temporary browser profile and
 removes the raw extraction files after producing the payment summary.
 
 `benefits` lists every benefit in the current session, including benefits without
 medical-report eligibility. Each payment includes `benefit_number`, so callers
 can group credit records by NB. A listed benefit may have no credits in the
-requested five-year period; listing is not a promise of payment records.
+requested period; listing is not a promise of payment records.
 
-The login checks visible GOV.BR evidence after password submission and during
-token collection. A known failure returns `error_code`, `error` and
-`login_evidence` from the MCP, without payment data. CLI failures exit with code
-3 and save the same diagnostic in `receipt.json`:
+The shared query defaults to one recent credit-history API window. `years=5`
+explicitly requests five windows. Use both `start_date` and `end_date` for an
+ISO date range, or `include_payments=False` to omit payment history.
+
+The shared login classifies GOV.BR errors without exporting HTML, tokens or
+request bodies. Known authentication failures return `error_code` and `error`
+from the MCP, without payment data. CLI failures exit with code 3 and save a
+sanitized diagnostic in `receipt.json`:
 
 - `invalid_credentials`: captured GOV.BR message “Usuário e/ou senha inválidos.”
   and/or provider code `ERL0003900`. GOV.BR does not distinguish a wrong CPF from
@@ -80,9 +89,11 @@ reconstructions under `tests/fixtures/govbr-*.html`. See
 [GOV.BR's description of two-step verification](https://acesso.gov.br/faq/_perguntasdafaq/oqueautenticacao2fatores.html)
 for the password-then-app-code flow.
 
-Each call also downloads the **carta de concessao** PDF for each benefit listed
-in the customer's current session. CLI PDFs are saved in `--out`; MCP PDFs are
-kept under `runs/mcp/inss-*/` and returned as `concession_letters[].file_path`.
+Letters are opt-in: use `include_letters=True` to download every session
+**carta de concessao**, or `letter_benefit_numbers=["NB_FROM_LIST"]` to select
+benefits. CLI PDFs are saved in `--out`; MCP PDFs are
+kept under `runs/mcp/inss-*/` (or `INSS_DOCUMENTS_DIR`) and returned as
+`concession_letters[].file_path`.
 These private local files remain after the call, so the desktop client can open
 them. Delete the corresponding run directory when the documents are no longer
 needed. Failed or unavailable letters include their HTTP status and an error;

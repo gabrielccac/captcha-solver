@@ -1,6 +1,8 @@
 # Meu INSS: browser → HTTP
 
-An additional login path; existing extraction and MCP commands are unchanged.
+The login primitive used by `inss-query`, `inss-extract` and the MCP. The
+`inss-login-http` command validates authentication only; see
+[selective queries](inss-query.md) for payment/document extraction.
 The browser handles bootstrap, CPF and hCaptcha. A `requests.Session` handles the
 protected POST, password, OAuth callback, code exchange and API bootstrap.
 
