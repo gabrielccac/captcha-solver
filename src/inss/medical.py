@@ -1,5 +1,6 @@
 """List session benefits eligible for medical reports and download a chosen PDF."""
 import re
+from contextlib import nullcontext
 from pathlib import Path
 
 import requests
@@ -13,7 +14,7 @@ def list_medical_reports(mi):
             if benefit["benefit_type_code"] in (31, 32, 36, 87, 88, 91, 92, 94, 95, 96)]
 
 
-def download_medical_report(auth, mi, benefit_number, output_dir):
+def download_medical_report(auth, mi, benefit_number, output_dir, *, session=None):
     nb = str(benefit_number)
     if not re.fullmatch(r"[0-9]{1,15}", nb):
         raise ValueError("Invalid medical report benefit number")
@@ -21,8 +22,8 @@ def download_medical_report(auth, mi, benefit_number, output_dir):
         raise ValueError("Medical report benefit outside current session")
     result = {"benefit_number": nb, "http_status": None, "file": None}
     try:
-        client, headers = api_session(auth, mi)
-        with client:
+        client, headers = api_session(auth, mi) if session is None else (session, dict(session.headers))
+        with client if session is None else nullcontext(client):
             response = client.get(f"{API}/laudomedicoservices/pdf/{nb}",
                                   headers=headers, timeout=30, allow_redirects=False)
         result["http_status"] = response.status_code
@@ -40,4 +41,6 @@ def download_medical_report(auth, mi, benefit_number, output_dir):
             result.update(file=path.name, size_bytes=len(response.content))
     except requests.RequestException:
         result["error"] = "Medical report request timed out or could not connect"
+    except OSError:
+        result.update(file=None, error="Medical report could not be saved")
     return result

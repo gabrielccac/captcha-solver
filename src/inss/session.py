@@ -8,6 +8,7 @@ import re
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -250,21 +251,31 @@ def api_session(auth, mi):
     return s, {"Authorization": "Bearer " + auth, "mitoken": mi}
 
 
-def concession_letters(auth, mi, output_dir):
+def concession_letters(auth, mi, output_dir, *, benefit_numbers=None, session=None, executor=None):
     benefits = token_claims(mi).get("nbs", [])
     if not isinstance(benefits, list) or any(not re.fullmatch(r"[0-9]{1,15}", str(nb)) for nb in benefits):
         raise ValueError("Invalid benefit numbers in session")
+    if benefit_numbers is not None:
+        selected = list(dict.fromkeys(map(str, benefit_numbers)))
+        if any(nb not in set(map(str, benefits)) for nb in selected):
+            raise ValueError("Concession benefit outside current session")
+        benefits = selected
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    with api_session(auth, mi)[0] as session:
-        headers = dict(session.headers, Authorization="Bearer " + auth, mitoken=mi)
+    if session is None:
+        with api_session(auth, mi)[0] as client:
+            headers = dict(client.headers, Authorization="Bearer " + auth, mitoken=mi)
+    else:
+        headers = dict(session.headers, Authorization="Bearer " + auth, miToken=mi)
 
     def download(nb):
         result = {"benefit_number": nb, "http_status": None, "file": None}
         started = time.monotonic()
+        response = None
         try:
             response = requests.get(f"{API}/calculoBeneficioServices/concalPdf/{nb}",
                                     headers=headers, timeout=30, allow_redirects=False)
+            result["download_ms"] = round((time.monotonic() - started) * 1000)
             result["http_status"] = response.status_code
             if response.status_code != 200:
                 result["error"] = "Carta unavailable" if response.status_code == 404 else "Carta request failed"
@@ -277,54 +288,95 @@ def concession_letters(auth, mi, output_dir):
                     path.chmod(0o600)
                     fh.write(response.content)
                 result.update(file=filename, size_bytes=len(response.content))
+                parsing = time.monotonic()
                 try:
                     result["parsed"] = parse_concession_pdf(path)
                 except (OSError, subprocess.SubprocessError):
                     result["parse_error"] = "PDF text extraction failed; check pdftotext installation"
+                finally:
+                    result["parse_ms"] = round((time.monotonic() - parsing) * 1000)
         except requests.RequestException:
             result["error"] = "Carta request timed out or could not connect"
+        except OSError:
+            result.update(file=None, error="Carta could not be saved")
+        finally:
+            if response is not None:
+                response.close()
         result["elapsed_s"] = round(time.monotonic() - started, 1)
         return result
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with nullcontext(executor) if executor is not None else ThreadPoolExecutor(max_workers=5) as pool:
         return list(pool.map(download, dict.fromkeys(map(str, benefits))))
 
 
-def extract(cpf_full, auth, mi, windows=None):
-    s, h = api_session(auth, mi)
+def extract(cpf_full, auth, mi, windows=None, *, session=None, include_userinfo=True, executor=None):
+    """Keep successful windows when a sibling times out or returns invalid JSON."""
+    s, h = api_session(auth, mi) if session is None else (session, {})
     cpf_id = cpf_full.lstrip("0")
     out = {"windows": [], "creditos": [], "beneficios": None}
-    windows = windows or credit_windows()
+    windows = credit_windows() if windows is None else list(windows)
     headers = dict(s.headers, **h)
 
     def get_window(window):
         a, b = window
         started = time.monotonic()
-        rr = requests.get(f"{API}/hiscreServices/historicocreditos/{cpf_id}/{a}/{b}",
-                          headers=headers, timeout=30)
-        return rr, round(time.monotonic() - started, 1)
+        result = {"window": f"{a}/{b}", "status": None}
+        body = None
+        try:
+            rr = requests.get(f"{API}/hiscreServices/historicocreditos/{cpf_id}/{a}/{b}",
+                              headers=headers, timeout=30, allow_redirects=False)
+            try:
+                result["status"] = rr.status_code
+                if rr.status_code == 200:
+                    body = rr.json()
+                    credits = body.get("creditosTO", []) if isinstance(body, dict) else None
+                    if (not isinstance(credits, list) or any(not isinstance(c, dict)
+                            or not isinstance(c.get("idCredito"), (int, str)) for c in credits)
+                            or not isinstance(body.get("listaNbHiscreTO", []), list)):
+                        body = None
+                        result["error"] = "invalid_response"
+                    else:
+                        result["n_credits"] = len(credits)
+                elif rr.status_code != 404:
+                    result["error"] = "http_error"
+            finally:
+                rr.close()
+        except ValueError:
+            result["error"] = "invalid_response"
+        except requests.RequestException:
+            result["error"] = "network_error"
+        result["elapsed_s"] = round(time.monotonic() - started, 1)
+        return result, body
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with nullcontext(executor) if executor is not None else ThreadPoolExecutor(max_workers=5) as pool:
         futures = [pool.submit(get_window, window) for window in windows]
-        started = time.monotonic()
-        r = s.get(f"{API}/usuarioservices/info/{cpf_full}?refreshPedidos=false",
-                  headers=h, timeout=30)
-        out["userinfo_status"] = r.status_code
-        out["userinfo_s"] = round(time.monotonic() - started, 1)
+        if include_userinfo:
+            started = time.monotonic()
+            try:
+                r = s.get(f"{API}/usuarioservices/info/{cpf_full}?refreshPedidos=false",
+                          headers=h, timeout=30, allow_redirects=False)
+                out["userinfo_status"] = r.status_code
+                r.close()
+            except requests.RequestException:
+                out.update(userinfo_status=None, userinfo_error="network_error")
+            finally:
+                if session is None:
+                    s.close()
+            out["userinfo_s"] = round(time.monotonic() - started, 1)
+        elif session is None:
+            s.close()
         credits = {}
-        for (a, b), future in zip(windows, futures):
-            rr, elapsed = future.result()
-            w = {"window": f"{a}/{b}", "status": rr.status_code,
-                 "elapsed_s": elapsed}
-            if rr.status_code == 200:
-                body = rr.json()
-                w["n_credits"] = len(body.get("creditosTO", []))
-                out["beneficios"] = body.get("listaNbHiscreTO", [])
+        benefits = []
+        for future in futures:
+            w, body = future.result()
+            if body is not None and not w.get("error"):
+                for benefit in body.get("listaNbHiscreTO", []):
+                    if benefit not in benefits:
+                        benefits.append(benefit)
                 for c in body.get("creditosTO", []):
                     credits[c["idCredito"]] = c
-            else:
-                w["body"] = rr.text[:100]
             out["windows"].append(w)
+    out["beneficios"] = benefits
     out["n_unique_credits"] = len(credits)
-    out["creditos"] = [credits[k] for k in sorted(credits)]
+    out["creditos"] = [credits[k] for k in sorted(credits, key=str)]
     return out

@@ -15,7 +15,9 @@ dependencies = [
 
 [project.scripts]
 inss-login-http = "inss.http_login:main"
-inss-extract = "inss.workflow:main"
+inss-query = "inss.query:main"
+inss-extract = "inss.query:main"
+inss-browser-legacy = "inss.workflow:main"
 comprasnet-login = "comprasnet.workflow:main"
 inss-mcp = "inss.mcp_server:main"
 

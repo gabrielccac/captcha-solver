@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -57,7 +58,8 @@ class MedicalTests(unittest.TestCase):
             report = download_medical_report("auth", mi, "1234567890", out)
             path = Path(out) / report["file"]
             self.assertEqual(path.read_bytes(), b"%PDF-1.5\n%%EOF")
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            if os.name == "posix":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(report["http_status"], 200)
             client.get.assert_called_once_with(
                 "https://vip-pmeuinss-api.inss.gov.br/apis/laudomedicoservices/pdf/1234567890",

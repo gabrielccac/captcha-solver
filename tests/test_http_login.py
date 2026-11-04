@@ -190,6 +190,9 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
             post_data="token=" + "A" * 40, headers={})))
 
     def solve(*args, **kwargs):
+        if not batch:
+            assert kwargs["vision_session"] is not session
+            assert not kwargs["vision_session"].headers.get("Authorization")
         if deferred_capture:
             page.wait_for_selector.side_effect = lambda *a, **kw: capture()
         else:

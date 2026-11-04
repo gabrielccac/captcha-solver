@@ -127,9 +127,9 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
             resources.callback(browser.close)
             page = browser.contexts[0].pages[0]
             receipt["browser_version"] = browser.version
+            vision_session=resources.enter_context(requests.Session())
             if batch_captcha:
                 from captcha.prefetch import PrefetchedSolver
-                vision_session=resources.enter_context(requests.Session())
                 prefetched=PrefetchedSolver(vision_session)
                 prefetched.attach(page)
                 resources.callback(prefetched.close)
@@ -174,6 +174,8 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
                             timing={'interactions':interactions} if interactions is not None else {}
                             if prefetched is not None:
                                 timing['vision_solver']=prefetched
+                            else:
+                                timing['vision_session']=vision_session
                             done, info = hcaptcha.solve_round(page, images, rnd, MODEL,
                                 "minimal", HANDOFF_SELECTOR, api_key=api_key, **timing)
                     except PlaywrightError:
@@ -181,7 +183,7 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
                             break
                         raise
                     receipt.setdefault("rounds", []).append({key: info[key] for key in
-                        ("round", "capture_s", "solve_s", "click_s", "verdict_s")
+                        ("round", "modal_wait_s", "capture_s", "extract_s", "solve_s", "click_s", "verdict_s")
                         if isinstance(info.get(key), (int, float))})
                     if interactions is not None:
                         receipt['selection_waits']=list(interactions.metrics)
