@@ -17,6 +17,7 @@ jobs:
     steps:
       - name: Observe one login using the approved browser image
         env:
+          PROBE_IMAGE: ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62c0e4242870ff30eefae56bd35c446eaba02d093b5dea3f397018496e7103ba
           GHCR_TOKEN: ${{ github.token }}
           GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
           GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
@@ -26,8 +27,8 @@ jobs:
           import hashlib,os,pathlib,runpy,sys,tempfile,urllib.request
           sources={
             'fast_run.py':('3345f51c8d54f9413a2cae5a10a7454d63db8b3e','9b0d9505a9e11abbfa987985f091bf5b5beefda4f68096483f0c3d4d0d906d9a'),
-            'captcha_probe.py':('2a2c92fecabfb1f8d9ac2cd34d298da7f3834551','a4daba58bb0b142e984eeb10de56e934b795d6fc3c99028225f9f9bf97a6d183'),
-            'probe_run.py':('2a2c92fecabfb1f8d9ac2cd34d298da7f3834551','75e4527d86d18bd963fa6cf2bb114facbbe072ecab5745fbf3b05281467674ab')}
+            'captcha_probe.py':('6b69ff105b4b7077c4652fdb084c794a13927f8d','5ebf40933ae3f8386a8e22efde4d454aec21bb7c9bb3d0bd828c8220d6fee272'),
+            'probe_run.py':('6b69ff105b4b7077c4652fdb084c794a13927f8d','8a555da5046c8aad0cbb1da52c275207983ddee5ec8431d13d42f9dccd08d606')}
           with tempfile.TemporaryDirectory(prefix='captcha-probe-source-') as directory:
               root=pathlib.Path(directory)
               for name,(ref,expected) in sources.items():
