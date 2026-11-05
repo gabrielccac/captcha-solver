@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 
-IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:88473eecf5f4d70a012aaca2e3fbd33b3b9147311c8a7a65a343426ca389cb3e'
+IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62c0e4242870ff30eefae56bd35c446eaba02d093b5dea3f397018496e7103ba'
 BUNDLE_HASHES = {
     'run_container.py': 'eb62f4b71c6016bfbd25f8ff4037c19cf5276deab89d6abb0d12d2f2449e1902',
     'seccomp.json': '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433',
