@@ -50,6 +50,9 @@ def main():
     report = dict(success=False, mode=mode, legacy=legacy, parallelism=parallelism,
                   image=IMAGE, phases_ms={}, start_unix_ms=round(time.time() * 1000),
                   source_fetch_ms=int(os.environ.get('FAST_SOURCE_FETCH_MS', '0')))
+    report['runner_image'] = os.environ.get('ImageVersion')
+    report['cpu_model'] = next(line.split(':', 1)[1].strip() for line in
+        Path('/proc/cpuinfo').read_text().splitlines() if line.startswith('model name'))
     previous_config = os.environ.get('DOCKER_CONFIG')
     live_started = False
 
@@ -80,7 +83,10 @@ def main():
                 auth = base64.b64encode((actor + ':' + token).encode()).decode()
                 config.write_text(json.dumps({'auths': {'ghcr.io': {'auth': auth}}}))
                 config.chmod(0o600)
-            if parallelism != 3:
+            daemon = Path('/etc/docker/daemon.json')
+            configured = json.loads(daemon.read_text()) if daemon.exists() else {}
+            report['downloads_before'] = configured.get('max-concurrent-downloads', 3)
+            if report['downloads_before'] != parallelism:
                 # Only the disposable hosted runner is reconfigured, never the VPS.
                 assert os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
                 code = ('import json,pathlib; p=pathlib.Path("/etc/docker/daemon.json"); '
