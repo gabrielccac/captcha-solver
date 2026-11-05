@@ -1,6 +1,7 @@
 """The observation layer preserves decisions and exports challenge-only pixels."""
 import importlib.util
 import json
+import io
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -41,3 +42,19 @@ def test_model_probe_preserves_answer_without_recording_credentials(tmp_path, mo
     metadata = probe.save(tmp_path)
     assert metadata['model_calls'][0]['selected'] == [1, 3]
     assert 'private-key-fixture' not in json.dumps(metadata)
+
+
+def test_late_frames_never_override_failure_or_click_again(monkeypatch):
+    probe.rounds.clear()
+    before = Image.new('RGB', (400, 600), 'white')
+    controller = probe.interactions.DynamicInteractions()
+    probe.prepare(controller, before, (10, 130, 380, 380), [1])
+    raw = io.BytesIO()
+    before.save(raw, format='PNG')
+    page = Mock()
+    page.screenshot.return_value = raw.getvalue()
+    monkeypatch.setattr(probe, 'original_wait', Mock(return_value=False))
+    assert not probe.wait_ready(controller, page, {})
+    assert len(probe.rounds[-1]['frames']) == 3
+    assert all(frame['late'] for frame in probe.rounds[-1]['frames'])
+    page.mouse.click.assert_not_called()

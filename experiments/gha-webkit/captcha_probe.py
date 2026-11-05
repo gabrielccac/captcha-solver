@@ -17,6 +17,7 @@ original_click = interactions.DynamicInteractions.click
 original_model = solver.solve
 original_decision = prefetch.PrefetchedSolver.__call__
 original_clip = hcaptcha.modal_clip
+original_wait = interactions.DynamicInteractions.wait_ready
 
 
 def prepare(self, before, grid, selected):
@@ -31,10 +32,27 @@ def marks(before, after, grid):
     found = original_marks(before, after, grid)
     if rounds:
         rounds[-1]['frames'].append(dict(observed=sorted(found), image=after.copy(),
+            late=bool(rounds[-1].get('late_probe')),
             elapsed_ms=round((time.monotonic() - rounds[-1]['start']) * 1000)))
         if len(rounds[-1]['frames']) > 16:
             rounds[-1]['frames'].pop(0)
     return found
+
+
+def wait_ready(self, page, clip):
+    confirmed = original_wait(self, page, clip)
+    if not confirmed and rounds:
+        # Observe late rendering after failure, preserving the original failure result.
+        rounds[-1]['late_probe'] = True
+        try:
+            for _ in range(3):
+                page.wait_for_timeout(200)
+                from PIL import Image
+                current = Image.open(io.BytesIO(page.screenshot(clip=clip, timeout=2000))).convert('RGB')
+                marks(self.before, current, self.grid)
+        except Exception:
+            pass
+    return confirmed
 
 
 def click(self, page, x, y):
@@ -109,6 +127,7 @@ def save(directory):
 if __name__ == '__main__':
     interactions.DynamicInteractions.prepare = prepare
     interactions.DynamicInteractions.click = click
+    interactions.DynamicInteractions.wait_ready = wait_ready
     interactions.selection_marks = marks
     solver.solve = hcaptcha.solve = model
     prefetch.PrefetchedSolver.__call__ = decision
