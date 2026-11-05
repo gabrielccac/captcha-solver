@@ -1,5 +1,9 @@
 # Execução rápida no Actions — 2026-11-05
 
+Os números abaixo registram a campanha de startup. A imagem recebeu depois duas
+correções de captcha, mantendo o navegador: veja [CAPTCHA-INVESTIGATION.md](CAPTCHA-INVESTIGATION.md)
+para o digest atual, evidências, testes e limitações.
+
 A execução real usa a imagem aprovada por digest, sem checkout nem repetição de
 testes de CI por login. Os testes continuam no build/benchmark da imagem. O
 worker mantém a verificação das fontes, versão do WebKit, identidade, troca de
