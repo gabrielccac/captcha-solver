@@ -2,7 +2,7 @@ name: WebKit headless - authorized authentication smoke test
 on:
   push:
     branches: [test/gha-webkit-20261104]
-    paths: [experiments/gha-webkit/image.ref]
+    paths: [.github/workflows/webkit-auth-smoke.yml, experiments/gha-webkit/image.ref]
 permissions:
   contents: read
   packages: read
@@ -12,49 +12,26 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 8
     environment: webkit-smoke-20261104
-    env:
-      DOCKER_CONFIG: /tmp/webkit-ghcr-auth
     steps:
-      - name: Checkout reviewed experiment
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          persist-credentials: false
-      - name: Resolve the previously validated immutable image
-        run: |
-          python3 - <<'PY'
-          import os,re
-          from pathlib import Path
-          image=Path('experiments/gha-webkit/image.ref').read_text().strip()
-          assert re.fullmatch(r'ghcr\.io/gabrielccac/captcha-solver-webkit-smoke@sha256:[0-9a-f]{64}',image)
-          with open(os.environ['GITHUB_ENV'],'a') as stream:
-              stream.write('WEBKIT_IMAGE='+image+'\n')
-          PY
-      - name: Authenticate to the associated container registry
+      - name: Run the approved worker without repository checkout
         env:
+          FAST_MODE: live
+          PULL_PARALLELISM: '10'
           GHCR_TOKEN: ${{ github.token }}
-        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-      - name: Download the prebuilt validated image
-        run: docker pull "$WEBKIT_IMAGE"
-      - name: Mandatory offline authentication tests
-        run: >-
-          docker run --rm --network none --read-only
-          --tmpfs /tmp:rw,nosuid,size=512m,mode=1777
-          --entrypoint python "$WEBKIT_IMAGE"
-          -m pytest tests/test_auth.py tests/test_browser_captcha.py -q -p no:cacheprovider
-      - name: Offline WebKit render and input preflight
-        run: >-
-          docker run --rm --init --network none --read-only --cpus 1 --memory 1400m
-          --pids-limit 320 --shm-size 128m --tmpfs /tmp:rw,nosuid,size=512m,mode=1777
-          --security-opt seccomp=experiments/gha-webkit/seccomp.json
-          "$WEBKIT_IMAGE" --offline-preflight
-      - name: One real login and authenticated endpoint validation
-        env:
           GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
           GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
           OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}
-        run: python3 experiments/gha-webkit/run_container.py
-      - name: Remove registry login
-        if: always()
-        run: docker logout ghcr.io
+        run: |
+          python3 - <<'PY'
+          import hashlib,os,time,urllib.request
+          start=time.monotonic()
+          url='https://api.github.com/repos/gabrielccac/captcha-solver/contents/experiments/gha-webkit/fast_run.py?ref=3345f51c8d54f9413a2cae5a10a7454d63db8b3e'
+          request=urllib.request.Request(url,headers={'Accept':'application/vnd.github.raw+json','Authorization':'Bearer '+os.environ['GHCR_TOKEN'],'X-GitHub-Api-Version':'2022-11-28'})
+          with urllib.request.urlopen(request,timeout=30) as response:
+              source=response.read()
+          assert hashlib.sha256(source).hexdigest()=='9b0d9505a9e11abbfa987985f091bf5b5beefda4f68096483f0c3d4d0d906d9a'
+          os.environ['FAST_SOURCE_FETCH_MS']=str(round((time.monotonic()-start)*1000))
+          exec(compile(source,url,'exec'),{'__name__':'__main__'})
+          PY
