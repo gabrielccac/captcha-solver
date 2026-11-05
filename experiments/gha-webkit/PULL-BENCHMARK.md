@@ -1,5 +1,9 @@
 # Preparação do WebKit no GitHub Actions
 
+Este relatório registra o benchmark de empacotamento. A execução por solicitação
+foi otimizada depois: consulte [FAST-LAUNCH.md](FAST-LAUNCH.md) para os tempos
+atuais, incluindo a fila e as tentativas reais.
+
 O workflow `webkit-pull-benchmark.yml` compara quatro empacotamentos da mesma
 imagem validada. Nenhum pacote, navegador, fonte ou código de autenticação é
 atualizado durante a preparação.
