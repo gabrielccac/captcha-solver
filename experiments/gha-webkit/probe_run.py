@@ -70,6 +70,7 @@ def main():
             os.environ.pop('DOCKER_CONFIG', None)
         else:
             os.environ['DOCKER_CONFIG'] = old_config
+        result['probe_image'] = IMAGE
         rendered = json.dumps(result)
         assert not any(value and value in rendered for value in [token, *values.values()])
         values.clear()
