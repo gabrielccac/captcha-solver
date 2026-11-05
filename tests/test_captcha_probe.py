@@ -4,6 +4,7 @@ import json
 import io
 from pathlib import Path
 from unittest.mock import Mock
+from types import SimpleNamespace
 
 from PIL import Image
 
@@ -58,3 +59,17 @@ def test_late_frames_never_override_failure_or_click_again(monkeypatch):
     assert len(probe.rounds[-1]['frames']) == 3
     assert all(frame['late'] for frame in probe.rounds[-1]['frames'])
     page.mouse.click.assert_not_called()
+
+
+def test_handoff_observation_records_only_error_flags(monkeypatch):
+    probe.handoffs.clear()
+    original = Mock(return_value='password-page-fixture')
+    monkeypatch.setattr(probe, 'original_password_page', original)
+    response = SimpleNamespace(status_code=200, url='https://sso.acesso.gov.br/?private-query-fixture',
+        text='<form><input name="accountId" value="private-account-fixture"></form>'
+             '<input value="private-password-fixture"><p>Captcha inválido, tente novamente.</p>')
+    session = Mock()
+    assert probe.inspect_handoff(session, response) == 'password-page-fixture'
+    assert probe.handoffs[0]['invalid_captcha_text']
+    assert 'private-' not in json.dumps(probe.handoffs)
+    original.assert_called_once_with(session, response)

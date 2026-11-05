@@ -4,13 +4,19 @@ import io
 import json
 from pathlib import Path
 import runpy
+import re
 import sys
 import time
+import unicodedata
+from html.parser import HTMLParser
 
 sys.path.insert(0, '/app/experiments/gha-webkit')
 from captcha import hcaptcha, interactions, prefetch, solver
+from inss import http_login
+from auth.govbr import LoginPage
 
 rounds, models, decisions, clips = [], [], [], []
+handoffs = []
 original_prepare = interactions.DynamicInteractions.prepare
 original_marks = interactions.selection_marks
 original_click = interactions.DynamicInteractions.click
@@ -18,6 +24,33 @@ original_model = solver.solve
 original_decision = prefetch.PrefetchedSolver.__call__
 original_clip = hcaptcha.modal_clip
 original_wait = interactions.DynamicInteractions.wait_ready
+original_password_page = http_login.password_page
+
+
+def inspect_handoff(session, response):
+    class TextOnly(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.skip = False
+            self.parts = []
+        def handle_starttag(self, tag, attrs):
+            if tag in ('script', 'style'):
+                self.skip = True
+        def handle_endtag(self, tag):
+            if tag in ('script', 'style'):
+                self.skip = False
+        def handle_data(self, data):
+            if not self.skip:
+                self.parts.append(data)
+    parser = TextOnly()
+    parser.feed(response.text)
+    text = unicodedata.normalize('NFKD', ' '.join(parser.parts)).encode('ascii', 'ignore').decode().casefold()
+    text = ' '.join(text.split())
+    handoffs.append(dict(status=response.status_code, page_kind=LoginPage(response.url, response.text).kind,
+        invalid_captcha_text=bool(re.search(r'captcha.{0,40}(invalid|incorret)|(invalid|incorret).{0,40}captcha', text)),
+        expired_session_text='sessao expir' in text or 'session expired' in text,
+        error_code_present=bool(re.search(r'\berl[0-9]{7}\b', text))))
+    return original_password_page(session, response)
 
 
 def prepare(self, before, grid, selected):
@@ -98,7 +131,7 @@ def modal_clip(*args, **kwargs):
 
 def save(directory):
     directory.mkdir(exist_ok=True)
-    metadata = dict(rounds=[], model_calls=[], decisions=decisions, clips=clips)
+    metadata = dict(rounds=[], model_calls=[], decisions=decisions, clips=clips, handoffs=handoffs)
     for index, record in enumerate(rounds):
         x, y, width, height = record['grid']
         area = (x, y, x + width, y + height)
@@ -132,6 +165,7 @@ if __name__ == '__main__':
     solver.solve = hcaptcha.solve = model
     prefetch.PrefetchedSolver.__call__ = decision
     hcaptcha.modal_clip = modal_clip
+    http_login.password_page = inspect_handoff
     result = dict(success=False, code='probe_runtime_error')
     try:
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):

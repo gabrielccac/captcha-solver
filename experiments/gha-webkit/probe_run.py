@@ -7,7 +7,11 @@ import subprocess
 import tempfile
 import threading
 
-from fast_run import IMAGE, KEYS, verify_bundle
+from fast_run import IMAGE as BASE_IMAGE, KEYS, verify_bundle
+
+PATCH_IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62c0e4242870ff30eefae56bd35c446eaba02d093b5dea3f397018496e7103ba'
+IMAGE = os.environ.pop('PROBE_IMAGE', BASE_IMAGE)
+assert IMAGE in (BASE_IMAGE, PATCH_IMAGE)
 
 
 def main():
