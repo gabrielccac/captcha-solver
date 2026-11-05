@@ -1,0 +1,76 @@
+name: Validate captcha-only patch on frozen WebKit runtime
+on:
+  push:
+    branches: [test/gha-webkit-20261104]
+    paths: [.github/workflows/webkit-captcha-patch.yml]
+permissions:
+  contents: read
+  packages: write
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DOCKER_CONFIG: /tmp/captcha-patch-registry
+      PACKAGE: ghcr.io/gabrielccac/captcha-solver-webkit-smoke
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Registry authentication
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish isolated candidate without installing dependencies
+        run: |
+          docker buildx create --name captcha-patch --driver docker-container --use
+          docker buildx build --platform linux/amd64 --provenance=false \
+            --file experiments/gha-webkit/Dockerfile.captcha-patch \
+            --metadata-file /tmp/captcha-patch-build.json \
+            --output "type=image,name=$PACKAGE:candidate-$GITHUB_SHA,push=true,compression=zstd,compression-level=14,oci-mediatypes=true" .
+          python3 - <<'PY'
+          import json,os
+          image=os.environ['PACKAGE']+'@'+json.load(open('/tmp/captcha-patch-build.json'))['containerimage.digest']
+          with open(os.environ['GITHUB_ENV'],'a') as f:f.write('PATCH_IMAGE='+image+'\n')
+          PY
+          docker pull "$PACKAGE:candidate-$GITHUB_SHA"
+      - name: Offline auth, prefetch and interaction regression tests
+        run: >-
+          docker run --rm --network none --read-only
+          --tmpfs /tmp:rw,nosuid,size=512m,mode=1777
+          --mount type=bind,src=${{ github.workspace }}/tests,dst=/verification/tests,readonly
+          --entrypoint python "$PATCH_IMAGE" -m pytest
+          /verification/tests/test_auth.py /verification/tests/test_browser_captcha.py
+          /verification/tests/test_interactions.py /verification/tests/test_prefetch.py
+          -q -p no:cacheprovider
+      - name: Verify browser, font files and trusted rendering without network
+        run: >-
+          docker run --rm --init --network none --read-only --cpus 1 --memory 1400m
+          --pids-limit 320 --shm-size 128m --tmpfs /tmp:rw,nosuid,size=512m,mode=1777
+          --security-opt seccomp=experiments/gha-webkit/seccomp.json
+          "$PATCH_IMAGE" --offline-preflight
+      - name: Confirm only the two intended Python files changed
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib,subprocess
+          base='ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:88473eecf5f4d70a012aaca2e3fbd33b3b9147311c8a7a65a343426ca389cb3e'
+          candidate=os.environ['PATCH_IMAGE']
+          subprocess.run(['docker','pull',base],check=True)
+          code=pathlib.Path('experiments/gha-webkit/runtime_fingerprint.py').read_text()
+          def snapshot(image):
+              raw=subprocess.check_output(['docker','run','--rm','-i','--network','none','--read-only','--user','0:0','--entrypoint','python',image,'-','--records'],input=code,text=True)
+              return {r[0]:r for r in json.loads(raw)['records']}
+          before,after=snapshot(base),snapshot(candidate)
+          changed=[p for p in sorted(before.keys()|after.keys()) if before.get(p)!=after.get(p)]
+          assert set(changed)=={'/app/src/captcha/interactions.py','/app/src/captcha/prefetch.py'},changed
+          assert all(before[p][:4]==after[p][:4] for p in changed)
+          def config(image):
+              c=json.loads(subprocess.check_output(['docker','image','inspect',image],text=True))[0]['Config']
+              return {k:c.get(k) for k in ['User','Env','WorkingDir','Entrypoint','Cmd']}
+          assert config(base)==config(candidate)
+          print('PATCH_FILES_CONFIRMED '+json.dumps(changed))
+          print('CAPTCHA_PATCH_APPROVED_IMAGE '+candidate)
+          PY
+      - name: Remove registry login
+        if: always()
+        run: docker logout ghcr.io
