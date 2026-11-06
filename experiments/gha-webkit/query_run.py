@@ -41,6 +41,10 @@ def main():
     values = {key: os.environ.pop(key) for key in KEYS}
     token = os.environ.pop('GHCR_TOKEN')
     certificate = os.environ.pop('QUERY_RECIPIENT_CERT')
+    worker = os.environ.pop('QUERY_WORKER_FILE', 'query_worker.py')
+    mode = os.environ.pop('COMPARE_MODE', 'none')
+    assert worker in ('query_worker.py', 'compare_worker.py')
+    assert mode in ('none', 'screenshot', 'network')
     previous_config = os.environ.get('DOCKER_CONFIG')
     name, process, timer = 'inss-private-query', None, None
     result = {'success': False, 'code': 'query_launch_failed', 'encrypted_result': False}
@@ -71,7 +75,8 @@ def main():
                 '--read-only', '--cpus', '1', '--memory', '1400m', '--memory-swap', '1400m',
                 '--pids-limit', '320', '--shm-size', '128m', '--tmpfs', '/tmp:rw,nosuid,size=512m,mode=1777',
                 '--security-opt', 'seccomp=' + str(root / 'seccomp.json'),
-                '--mount', 'type=bind,src=' + str(Path(__file__).with_name('query_worker.py').resolve()) + ',dst=/query_worker.py,readonly',
+                '--env', 'COMPARE_MODE=' + mode,
+                '--mount', 'type=bind,src=' + str(Path(__file__).with_name(worker).resolve()) + ',dst=/query_worker.py,readonly',
                 '--entrypoint', 'python', IMAGE, '-u', '/query_worker.py']
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.DEVNULL)
