@@ -1,0 +1,55 @@
+name: Build validated WebKit benchmark image
+on:
+  push:
+    branches: [test/gha-webkit-20261104]
+    paths:
+      - .github/workflows/webkit-image.yml
+      - experiments/gha-webkit/Dockerfile
+      - experiments/gha-webkit/check_fonts.py
+      - experiments/gha-webkit/fonts.json
+      - experiments/gha-webkit/smoke.py
+      - experiments/gha-webkit/seccomp.json
+      - src/**
+      - tests/**
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      IMAGE: ghcr.io/gabrielccac/captcha-solver-webkit-smoke
+      DOCKER_CONFIG: /tmp/webkit-ghcr-auth
+    steps:
+      - name: Checkout reviewed image source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Build image once for this code revision
+        run: >-
+          docker build --tag "$IMAGE:$GITHUB_SHA"
+          --label org.opencontainers.image.source=https://github.com/gabrielccac/captcha-solver
+          --label org.opencontainers.image.revision="$GITHUB_SHA"
+          --file experiments/gha-webkit/Dockerfile .
+      - name: Mandatory offline authentication tests
+        run: >-
+          docker run --rm --network none --read-only
+          --tmpfs /tmp:rw,nosuid,size=512m,mode=1777 --entrypoint python "$IMAGE:$GITHUB_SHA"
+          -m pytest tests/test_auth.py tests/test_browser_captcha.py -q -p no:cacheprovider
+      - name: Offline WebKit render and input preflight
+        run: >-
+          docker run --rm --init --network none --read-only --cpus 1 --memory 1400m
+          --pids-limit 320 --shm-size 128m --tmpfs /tmp:rw,nosuid,size=512m,mode=1777
+          --security-opt seccomp=experiments/gha-webkit/seccomp.json "$IMAGE:$GITHUB_SHA" --offline-preflight
+      - name: Authenticate to the associated container registry
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish immutable image and report digest
+        run: |
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker image inspect "$IMAGE:$GITHUB_SHA" --format 'IMAGE_REF {{index .RepoDigests 0}}'
+      - name: Remove registry login
+        if: always()
+        run: docker logout ghcr.io

@@ -3,12 +3,37 @@ import io
 import random
 from unittest.mock import Mock
 
-from PIL import Image
+from PIL import Image, ImageDraw
 import pytest
 import requests
 
 from captcha import solver
-from captcha.prefetch import PrefetchedSolver, captcha_url, fingerprint, match_tiles, MAX_IMAGES
+from captcha.prefetch import PrefetchedSolver, captcha_url, fingerprint, match_tiles, same_header, same_image, MAX_IMAGES
+
+
+def header_with_grid_focus_border():
+    short = Image.new('RGB', (400, 123), 'white')
+    draw = ImageDraw.Draw(short)
+    draw.rectangle((10, 10, 390, 117), fill=(0, 131, 143))
+    draw.text((20, 25), 'Select the matching images', fill='white')
+    long = Image.new('RGB', (400, 130), 'white')
+    long.paste(short, (0, 0))
+    ImageDraw.Draw(long).rectangle((7, 126, 394, 150), outline=(0, 131, 143), width=2)
+    return short, long
+
+
+def test_identical_instruction_with_added_focus_border_is_same_task():
+    short, long = header_with_grid_focus_border()
+    assert not same_image(short, long, (128, 64))
+    assert same_header(short, long) and same_header(long, short)
+
+
+@pytest.mark.parametrize('change', ['instruction', 'extra_text', 'photo'])
+def test_changed_task_pixels_are_not_ignored_as_padding(change):
+    short, long = header_with_grid_focus_border()
+    box = (30, 30, 60, 50) if change == 'instruction' else (30, 126, 60, 129)
+    ImageDraw.Draw(long).rectangle(box, fill='black' if change != 'photo' else (60, 80, 120))
+    assert not same_header(short, long)
 
 
 @pytest.fixture(autouse=True)

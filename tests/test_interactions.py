@@ -79,6 +79,52 @@ def test_short_click_retains_movement_and_small_fixed_margins():
     assert 80<=waits[0]<=120 and 100<=waits[1]<=160
 
 
+def test_two_matching_frames_near_deadline_confirm_stable_selection(monkeypatch):
+    from captcha import interactions
+    clock = [0.0]
+    monkeypatch.setattr(interactions.time, 'monotonic', lambda: clock[0])
+    missing, complete = io.BytesIO(), io.BytesIO()
+    widget({2}).save(missing, format='PNG')
+    widget({2, 5}).save(complete, format='PNG')
+    count = [0]
+    # Simulate a slowly rendering worker: first four frames still miss the last click.
+    def screenshot(**kwargs):
+        clock[0] += .4
+        count[0] += 1
+        return missing.getvalue() if count[0] <= 4 else complete.getvalue()
+    page = Mock()
+    page.screenshot.side_effect = screenshot
+    page.wait_for_timeout.side_effect = lambda ms: clock.__setitem__(0, clock[0] + ms / 1000)
+    controller = DynamicInteractions(timeout_ms=2500)
+    controller.prepare(widget(), GRID, [2, 5])
+    assert controller.wait_ready(page, {})
+    assert controller.metrics[-1]['frames'] == 6
+
+
+def test_matching_marks_with_changing_grid_are_not_ready(monkeypatch):
+    from captcha import interactions
+    clock = [0.0]
+    monkeypatch.setattr(interactions.time, 'monotonic', lambda: clock[0])
+    light, dark = io.BytesIO(), io.BytesIO()
+    widget({2, 5}).save(light, format='PNG')
+    image = widget({2, 5})
+    ImageDraw.Draw(image).rectangle((10, 250, 390, 500), fill='black')
+    image.save(dark, format='PNG')
+    payloads = [light.getvalue(), dark.getvalue()]
+    count = [0]
+    def screenshot(**kwargs):
+        clock[0] += .4
+        count[0] += 1
+        return payloads[count[0] % 2]
+    monkeypatch.setattr(interactions, 'selection_marks', lambda *args: {2, 5})
+    page = Mock()
+    page.screenshot.side_effect = screenshot
+    page.wait_for_timeout.side_effect = lambda ms: None
+    controller = DynamicInteractions(timeout_ms=1500)
+    controller.prepare(widget(), GRID, [2, 5])
+    assert not controller.wait_ready(page, {})
+
+
 def test_short_cpf_waits_for_value_and_button_without_changing_typing(monkeypatch):
     monkeypatch.setattr(session.random,'randint',lambda a,b:(a+b)//2)
     page=Mock()

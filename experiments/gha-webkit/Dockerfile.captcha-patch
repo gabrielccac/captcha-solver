@@ -1,0 +1,3 @@
+FROM ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:88473eecf5f4d70a012aaca2e3fbd33b3b9147311c8a7a65a343426ca389cb3e
+COPY src/captcha/interactions.py /app/src/captcha/interactions.py
+COPY src/captcha/prefetch.py /app/src/captcha/prefetch.py
