@@ -216,6 +216,9 @@ class CoreTests(unittest.TestCase):
 
     def test_solver_collects_billed_usage(self):
         class Response:
+            def close(self):
+                pass
+
             def raise_for_status(self):
                 pass
 

@@ -132,14 +132,14 @@ def credit_windows(today=None, years=5):
     return windows
 
 
-def human_type(page, selector, text):
+def human_type(page, selector, text, *, short_pauses=False):
     loc = page.locator(selector).first
     box = loc.bounding_box(timeout=15000)
     page.mouse.move(box["x"] + box["width"] / 2 + random.uniform(-20, 20),
                     box["y"] + box["height"] / 2 + random.uniform(-3, 3), steps=25)
-    page.wait_for_timeout(random.randint(300, 700))
+    page.wait_for_timeout(random.randint(100,200) if short_pauses else random.randint(300,700))
     loc.click(timeout=10000)
-    page.wait_for_timeout(random.randint(400, 900))
+    page.wait_for_timeout(random.randint(100,200) if short_pauses else random.randint(400,900))
     for ch in text:
         page.keyboard.type(ch, delay=random.randint(90, 220))
 
@@ -166,13 +166,27 @@ def goto_login(page):
     return m.group(1) if m else None
 
 
-def submit_cpf(page, cpf_masked):
-    human_type(page, 'input[name="accountId"], input#accountId', cpf_masked)
-    page.wait_for_timeout(random.randint(800, 1400))
+def submit_cpf(page, cpf_masked, *, short_pauses=False):
+    selector='input[name="accountId"], input#accountId'
+    if short_pauses:
+        human_type(page,selector,cpf_masked,short_pauses=True)
+        entered=page.locator(selector).first.input_value()
+        if re.sub(r'\D','',entered)!=re.sub(r'\D','',cpf_masked):
+            raise RuntimeError('cpf_input_not_ready')
+    else:
+        human_type(page,selector,cpf_masked)
+        page.wait_for_timeout(random.randint(800,1400))
     btn = page.locator('button:has-text("Continuar")').first
+    if short_pauses:
+        btn.wait_for(state='visible',timeout=10000)
+        deadline=time.monotonic()+10
+        while not btn.is_enabled():
+            if time.monotonic()>=deadline:
+                raise RuntimeError('cpf_submit_not_ready')
+            page.wait_for_timeout(50)
     box = btn.bounding_box(timeout=10000)
     page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=30)
-    page.wait_for_timeout(random.randint(500, 1000))
+    page.wait_for_timeout(random.randint(100,200) if short_pauses else random.randint(500,1000))
     page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
 
 
