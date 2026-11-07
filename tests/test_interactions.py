@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 from PIL import Image, ImageDraw
 
+from captcha.extractor import find_grid, tile_centers_page
 from captcha.interactions import DynamicInteractions, selection_marks
 from inss import session
 
@@ -42,6 +43,31 @@ def test_image_change_without_check_marker_is_not_selection():
     hover=before.copy()
     ImageDraw.Draw(hover).rectangle((20,140,115,235),fill='pink')
     assert selection_marks(before,hover,GRID)==set()
+
+
+def test_teal_photos_do_not_move_grid_or_hide_selection_marks():
+    before = widget()
+    # The broad teal band belongs to two photos well below the real header.
+    draw = ImageDraw.Draw(before)
+    draw.rectangle((16, 190, 128, 239), fill=(0, 130, 155))
+    draw.rectangle((146, 190, 258, 239), fill=(0, 130, 155))
+    clean_grid = find_grid(widget())
+    grid = find_grid(before)
+    assert grid == clean_grid
+    clip = {'x': 0, 'y': 0, 'width': 400, 'height': 600}
+    centers = tile_centers_page({}, clip, grid)
+    assert 130 < centers[0][1] < 250
+    assert 390 < centers[-1][1] < 510
+    after = widget({1, 6, 7})
+    # Preserve the teal photo in the unselected second tile.
+    after.paste(before.crop((146, 190, 262, 240)), (146, 190))
+    assert selection_marks(before, after, grid) == {1, 6, 7}
+
+
+def test_header_band_tolerates_a_short_text_gap():
+    image = widget()
+    ImageDraw.Draw(image).rectangle((10, 45, 390, 46), fill='white')
+    assert find_grid(image) == find_grid(widget())
 
 
 def test_loading_tiles_are_not_ready_for_vision():
