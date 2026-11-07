@@ -30,11 +30,11 @@ jobs:
         run: |
           python3 - <<'PY'
           import hashlib,os,pathlib,runpy,tempfile,urllib.request
-          sources={'query_run.py':'db2554ee8a0fb35ddd608b6568e533457a9d834bb1ef4e09cd52bb7e8a4b4191','query_worker.py':'56e7efbed36ca56ea5ea591328484b98393264fa6be1365f434b64f8913e6edd'}
+          sources={'query_run.py': 'ec1b15e919bb22d56a5bcf00006e5b25a1a63edbf6ab2c3d37c5bce2064f0ee8', 'query_worker.py': '8458cb568d8ed2ac39cba4965fde26d08c1facd5ef71c79f35cb0a2103810cfc'}
           with tempfile.TemporaryDirectory(prefix='private-query-source-') as directory:
               root=pathlib.Path(directory)
               for name,expected in sources.items():
-                  url=f'https://api.github.com/repos/gabrielccac/captcha-solver/contents/experiments/gha-webkit/{name}?ref=5a671a2891699547783501187dcb996e0e1c8932'
+                  url=f'https://api.github.com/repos/gabrielccac/captcha-solver/contents/experiments/gha-webkit/{name}?ref=ed1f5dc3d3f8887be63bae7c324faec5a45ce9cd'
                   request=urllib.request.Request(url,headers={'Accept':'application/vnd.github.raw+json','Authorization':'Bearer '+os.environ['GHCR_TOKEN'],'X-GitHub-Api-Version':'2022-11-28'})
                   with urllib.request.urlopen(request,timeout=30) as response:
                       source=response.read()
