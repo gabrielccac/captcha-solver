@@ -26,7 +26,7 @@ def summary(payload):
     validation = payload['validation']
     data = payload.get('client_data', {})
     credits = data.get('credits', {}).get('data', {})
-    return {'success': validation.get('success', False), 'code': validation.get('code'),
+    result = {'success': validation.get('success', False), 'code': validation.get('code'),
         'login_ms': validation.get('receipt', {}).get('elapsed_ms'),
         'worker_ms': validation.get('elapsed_ms'),
         'inss_http_status': validation.get('independent_api_http_status'),
@@ -35,6 +35,9 @@ def summary(payload):
         'benefit_count': len(data.get('benefits', [])),
         'credit_count': len(credits.get('creditosTO', [])) if isinstance(credits, dict) else None,
         'encrypted_result': True, 'raw_tokens_exported': False}
+    if 'captcha_selection_retry' in validation:
+        result['captcha_selection_retry'] = validation['captcha_selection_retry']
+    return result
 
 
 def main():

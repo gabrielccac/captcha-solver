@@ -47,6 +47,36 @@ def get_json(session, path, secrets):
         return {'error': 'query_failed', 'error_type': type(error).__name__}
 
 
+def login_with_selection_retry(run, input_line):
+    """Reopen a fresh profile only if visual verification stopped before any handoff."""
+    original_stdin = sys.stdin
+    try:
+        sys.stdin = io.StringIO(input_line)
+        first = run()
+        receipt = first.get('receipt') or {}
+        posts = ('http_captcha_posts', 'http_password_posts', 'browser_password_posts')
+        if (first.get('success') or first.get('code') != 'captcha_selection_not_confirmed'
+                or any(receipt.get(key) != 0 for key in posts)):
+            return first
+
+        sys.stdin = io.StringIO(input_line)
+        final = run()
+        waits = receipt.get('selection_waits') or []
+        final['captcha_selection_retry'] = {
+            'first_code': first['code'],
+            'first_elapsed_ms': receipt.get('elapsed_ms'),
+            'first_failure_phase': waits[-1].get('failure_phase') if waits else None,
+            'first_password_posts': receipt['http_password_posts'] + receipt['browser_password_posts'],
+            'first_captcha_posts': receipt['http_captcha_posts'],
+            'recovered': bool(final.get('success')),
+        }
+        if isinstance(first.get('elapsed_ms'), int) and isinstance(final.get('elapsed_ms'), int):
+            final['elapsed_ms'] += first['elapsed_ms']
+        return final
+    finally:
+        sys.stdin = original_stdin
+
+
 def main():
     collected = {}
     original_login = smoke.http_login.login
@@ -67,7 +97,10 @@ def main():
         return receipt
 
     smoke.http_login.login = login
-    result = smoke.main()
+    try:
+        result = login_with_selection_retry(smoke.main, sys.stdin.readline())
+    finally:
+        smoke.http_login.login = original_login
     return {'validation': result, 'client_data': collected}
 
 
