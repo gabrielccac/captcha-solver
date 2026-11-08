@@ -12,6 +12,7 @@ import time
 IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62e6266bad61e67eaa62eb2ca6f69493b1801d9077e2e2b117693c61c28d5571'
 SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
 KEYS = ('GOVBR_CPF', 'GOVBR_PASSWORD', 'OPENROUTER_API_KEY')
+JEAN_CLIENT_ACTIONS = {'invalid_credentials', 'two_factor_required'}
 JEAN_SOURCE_MOUNTS = {'govbr.py': '/app/src/auth/govbr.py',
                       'http_login.py': '/app/src/inss/http_login.py',
                       'aria.py': '/app/src/captcha/aria.py',
@@ -108,15 +109,21 @@ def main():
             assert len(raw) <= 5_000_000
             payload = json.loads(raw)
             report = summary(payload)
+            report['worker_returncode'] = process.returncode
             if worker == 'jean_worker.py':
+                if report['success']:
+                    report['result_class'] = 'authenticated'
+                elif process.returncode == 3 and report['code'] in JEAN_CLIENT_ACTIONS:
+                    report['result_class'] = 'client_action_required'
+                else:
+                    report['result_class'] = 'technical_failure'
                 payload['client_data']['login_diagnostics'] = {key: report[key] for key in (
-                    'failure_stage', 'failure_http_status', 'captcha_selection', 'captcha_selection_retry',
+                    'result_class', 'failure_stage', 'failure_http_status', 'captcha_selection', 'captcha_selection_retry',
                 ) if key in report}
                 raw = json.dumps(payload).encode()
             # Only authenticated ciphertext can leave the runner as an artifact.
             (output / 'result.cms').write_bytes(encrypt(raw, recipient))
             result = report
-            result['worker_returncode'] = process.returncode
     except Exception as error:
         result['error_type'] = type(error).__name__
     finally:
@@ -133,7 +140,7 @@ def main():
         (output / 'receipt.json').write_text(rendered)
         values.clear()
         print('SMOKE_RESULT ' + rendered, flush=True)
-    return 0 if result['success'] else 3
+    return 0 if result['success'] or result.get('result_class') == 'client_action_required' else 3
 
 
 if __name__ == '__main__':
