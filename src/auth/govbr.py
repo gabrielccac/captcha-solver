@@ -14,6 +14,7 @@ SSO_ORIGIN = "https://sso.acesso.gov.br"
 DEFAULT_SCOPE = "openid profile email phone govbr_confiabilidades"
 REDIRECTS = (301, 302, 303, 307, 308)
 INVALID_MSG = re.compile(r"Usu[aá]rio e/ou senha inv[aá]lidos|\bERL0003900\b", re.I)
+INVALID_CAPTCHA = re.compile(r"\bcaptcha\s+inv[aá]lido\b", re.I)
 TWO_FACTOR = re.compile(r'<input\b[^>]*\b(?:name|id)=["\']otpInput["\']', re.I)
 
 
@@ -32,8 +33,8 @@ class AuthError(RuntimeError):
 
 
 class TwoFactorRequired(AuthError):
-    def __init__(self, evidence: str = ""):
-        super().__init__("two_factor_required")
+    def __init__(self, evidence: str = "", *, http_status: int | None = None):
+        super().__init__("two_factor_required", http_status=http_status)
 
 
 @dataclass
@@ -211,6 +212,14 @@ class GovBrAuth:
         if cpf:
             overrides["accountId"] = cpf
         r = self._post_form(page, form, form.payload(**overrides))
+        if r.status_code == 400:
+            html = r.text or ""
+            if INVALID_MSG.search(html):
+                raise AuthError("invalid_credentials", http_status=400)
+            if TWO_FACTOR.search(html):
+                raise TwoFactorRequired(http_status=400)
+            if INVALID_CAPTCHA.search(html):
+                raise AuthError("captcha_invalid", http_status=400)
         self._read_page(r, page.url)
         loc = r.headers.get("Location", "")
         if r.status_code not in REDIRECTS or not loc:
