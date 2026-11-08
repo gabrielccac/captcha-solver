@@ -12,6 +12,9 @@ import time
 IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62e6266bad61e67eaa62eb2ca6f69493b1801d9077e2e2b117693c61c28d5571'
 SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
 KEYS = ('GOVBR_CPF', 'GOVBR_PASSWORD', 'OPENROUTER_API_KEY')
+JEAN_SOURCE_MOUNTS = {'govbr.py': '/app/src/auth/govbr.py',
+                      'http_login.py': '/app/src/inss/http_login.py',
+                      'query_worker.py': '/query_support.py'}
 
 
 def encrypt(payload, certificate):
@@ -24,10 +27,11 @@ def encrypt(payload, certificate):
 
 def summary(payload):
     validation = payload['validation']
+    receipt = validation.get('receipt', {})
     data = payload.get('client_data', {})
     credits = data.get('credits', {}).get('data', {})
     result = {'success': validation.get('success', False), 'code': validation.get('code'),
-        'login_ms': validation.get('receipt', {}).get('elapsed_ms'),
+        'login_ms': receipt.get('elapsed_ms'),
         'worker_ms': validation.get('elapsed_ms'),
         'inss_http_status': validation.get('independent_api_http_status'),
         'userinfo_http_status': data.get('userinfo', {}).get('http_status'),
@@ -37,6 +41,13 @@ def summary(payload):
         'encrypted_result': True, 'raw_tokens_exported': False}
     if 'captcha_selection_retry' in validation:
         result['captcha_selection_retry'] = validation['captcha_selection_retry']
+    for key in ('failure_stage', 'failure_http_status'):
+        if key in receipt:
+            result[key] = receipt[key]
+    if validation.get('code') == 'captcha_selection_not_confirmed' and receipt.get('selection_waits'):
+        selection = receipt['selection_waits'][-1]
+        result['captcha_selection'] = {key: selection[key] for key in
+            ('failure_phase', 'expected_selection', 'observed_selection') if key in selection}
     return result
 
 
@@ -81,8 +92,9 @@ def main():
                 '--env', 'COMPARE_MODE=' + mode,
                 '--mount', 'type=bind,src=' + str(Path(__file__).with_name(worker).resolve()) + ',dst=/query_worker.py,readonly']
             if worker == 'jean_worker.py':
-                command += ['--mount', 'type=bind,src=' + str(Path(__file__).with_name('query_worker.py').resolve())
-                            + ',dst=/query_support.py,readonly']
+                for filename, target in JEAN_SOURCE_MOUNTS.items():
+                    command += ['--mount', 'type=bind,src=' + str(Path(__file__).with_name(filename).resolve())
+                                + ',dst=' + target + ',readonly']
             command += ['--entrypoint', 'python', IMAGE, '-u', '/query_worker.py']
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.DEVNULL)
@@ -92,9 +104,15 @@ def main():
             raw, _ = process.communicate((json.dumps(values) + '\n').encode(), timeout=260)
             assert len(raw) <= 5_000_000
             payload = json.loads(raw)
+            report = summary(payload)
+            if worker == 'jean_worker.py':
+                payload['client_data']['login_diagnostics'] = {key: report[key] for key in (
+                    'failure_stage', 'failure_http_status', 'captcha_selection', 'captcha_selection_retry',
+                ) if key in report}
+                raw = json.dumps(payload).encode()
             # Only authenticated ciphertext can leave the runner as an artifact.
             (output / 'result.cms').write_bytes(encrypt(raw, recipient))
-            result = summary(payload)
+            result = report
             result['worker_returncode'] = process.returncode
     except Exception as error:
         result['error_type'] = type(error).__name__

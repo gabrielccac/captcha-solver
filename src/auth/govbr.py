@@ -24,10 +24,11 @@ def safe_url(url: str) -> str:
 
 
 class AuthError(RuntimeError):
-    def __init__(self, code: str, evidence: str = ""):
+    def __init__(self, code: str, evidence: str = "", *, http_status: int | None = None):
         # Não guardar HTML, URLs, corpos ou mensagens arbitrárias do servidor.
         super().__init__(code)
         self.code = code
+        self.http_status = http_status
 
 
 class TwoFactorRequired(AuthError):
@@ -100,12 +101,10 @@ class GovBrAuth:
 
     @staticmethod
     def _check_response(resp):
-        if resp.status_code == 403:
-            raise AuthError("http_forbidden")
-        if resp.status_code == 429:
-            raise AuthError("rate_limited")
-        if resp.status_code != 200 and resp.status_code not in REDIRECTS:
-            raise AuthError("http_error")
+        status = resp.status_code
+        if status != 200 and status not in REDIRECTS:
+            code = {403: "http_forbidden", 429: "rate_limited"}.get(status, "http_error")
+            raise AuthError(code, http_status=status)
 
     def _read_page(self, resp, fallback_url):
         self._check_response(resp)

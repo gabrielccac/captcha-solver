@@ -25,7 +25,8 @@ POSTS = {'http_captcha_posts': 0, 'http_password_posts': 0, 'browser_password_po
 def test_retry_only_once_before_handoff(worker, final_code):
     results = iter([
         {'success': False, 'code': 'captcha_selection_not_confirmed', 'elapsed_ms': 1500,
-         'receipt': {**POSTS, 'elapsed_ms': 1200, 'selection_waits': [{'failure_phase': 'marks'}]}},
+         'receipt': {**POSTS, 'elapsed_ms': 1200, 'selection_waits': [
+             {'failure_phase': 'marks', 'expected_selection': [0, 2], 'observed_selection': [0]}]}},
         {'success': final_code == 'ok', 'code': final_code, 'elapsed_ms': 2300},
     ])
     lines = []
@@ -41,6 +42,8 @@ def test_retry_only_once_before_handoff(worker, final_code):
     assert final['code'] == final_code
     assert final['elapsed_ms'] == 3800
     assert final['captcha_selection_retry']['first_failure_phase'] == 'marks'
+    assert final['captcha_selection_retry']['first_expected_selection'] == [0, 2]
+    assert final['captcha_selection_retry']['first_observed_selection'] == [0]
     assert final['captcha_selection_retry']['recovered'] == (final_code == 'ok')
 
 

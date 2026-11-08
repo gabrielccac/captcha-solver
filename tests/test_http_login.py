@@ -7,7 +7,7 @@ import pytest
 import requests
 
 from auth.handoff import CaptchaHandoff, password_page
-from auth.govbr import AuthError
+from auth.govbr import AuthError, GovBrAuth
 from inss.http_login import load_env_file, verify_api
 from inss import http_login
 
@@ -230,7 +230,9 @@ def test_password_form_required_after_captcha():
 @pytest.mark.parametrize('deferred_capture', [False, True])
 @pytest.mark.parametrize('optimized',[False,True])
 @pytest.mark.parametrize('batch',[False,True])
-def test_integrated_login_closes_browser_before_http_password(monkeypatch, deferred_capture,optimized,batch):
+@pytest.mark.parametrize('failure_stage', [None, 'http_consume_captcha', 'http_password', 'http_oauth_redirect'])
+def test_integrated_login_closes_browser_before_http_password(monkeypatch, deferred_capture,optimized,batch,
+                                                            failure_stage):
     events = []
     page, browser, manager = MagicMock(), MagicMock(), Mock()
     manager.start.return_value = "http://127.0.0.1:1234"
@@ -269,20 +271,40 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
         return True, {"round": 0, "solve_s": 1}
 
     monkeypatch.setattr(http_login.hcaptcha, "solve_round", solve)
-    monkeypatch.setattr(http_login, "password_page", lambda *a: Mock())
+    failure = SimpleNamespace(status_code=503, url="https://sso.acesso.gov.br/login",
+                              text="fixture-secret-response")
+    if failure_stage != "http_consume_captcha":
+        monkeypatch.setattr(http_login, "password_page", lambda *a: Mock())
     auth = Mock(authorization_code="fixture-code")
     auth.finish.return_value = [("https://meu.inss.gov.br/", 200)]
+    if failure_stage == "http_oauth_redirect":
+        auth.finish.side_effect = lambda: GovBrAuth._check_response(failure)
 
     def password(*args, **kwargs):
         assert events == ["browser_closed", "manager_stopped"]
         assert kwargs == {"captcha_required": False}
         events.append("http_password")
+        if failure_stage == "http_password":
+            GovBrAuth._check_response(failure)
 
     auth.submit_password.side_effect = password
     monkeypatch.setattr(http_login, "GovBrAuth", lambda *a, **kw: auth)
     monkeypatch.setattr(http_login, "verify_api", lambda *a: a[-1].update(api_session_verified=True))
     session = Mock(headers={}, cookies={})
-    session.post.return_value = Response()
+    session.post.return_value = failure if failure_stage == "http_consume_captcha" else Response()
+    if failure_stage:
+        receipt = {}
+        with pytest.raises(AuthError, match="^http_error$"):
+            http_login.login(session, "00000000000", "fixture-password", "fixture-key", receipt=receipt,
+                            optimize_interactions=optimized, batch_captcha=batch)
+        assert receipt["failure_stage"] == failure_stage
+        assert receipt["failure_http_status"] == 503
+        assert receipt["http_password_posts"] == (failure_stage != "http_consume_captcha")
+        assert auth.submit_password.call_count == receipt["http_password_posts"]
+        assert auth.finish.call_count == (failure_stage == "http_oauth_redirect")
+        assert "fixture-secret-response" not in json.dumps(receipt)
+        session.post.assert_called_once()
+        return
     receipt = http_login.login(session, "00000000000", "fixture-password", "fixture-key",optimize_interactions=optimized,batch_captcha=batch)
     assert receipt["success"] and receipt["api_session_verified"]
     assert receipt["browser_password_posts"] == 0 and receipt["http_password_posts"] == 1

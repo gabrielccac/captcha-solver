@@ -51,7 +51,7 @@ def verify_api(session, code, cpf, receipt):
                            timeout=30, allow_redirects=False)
     receipt["code_exchange_http_status"] = response.status_code
     if response.status_code != 200:
-        raise AuthError("code_exchange_failed")
+        raise AuthError("code_exchange_failed", http_status=response.status_code)
     data = response.json()
     access = data.get("access_token") if isinstance(data, dict) else None
     if not isinstance(access, str) or not access:
@@ -66,7 +66,7 @@ def verify_api(session, code, cpf, receipt):
     response = session.get(info_url, headers=headers, timeout=30, allow_redirects=False)
     receipt["userinfo_bootstrap_http_status"] = response.status_code
     if response.status_code != 200:
-        raise AuthError("userinfo_bootstrap_failed")
+        raise AuthError("userinfo_bootstrap_failed", http_status=response.status_code)
     data = response.json()
     mi = data.get("miToken") if isinstance(data, dict) else None
     if not isinstance(mi, str) or not mi:
@@ -76,7 +76,7 @@ def verify_api(session, code, cpf, receipt):
                      stream=True) as verified:
         receipt["authenticated_endpoint_http_status"] = verified.status_code
         if verified.status_code != 200:
-            raise AuthError("authenticated_endpoint_failed")
+            raise AuthError("authenticated_endpoint_failed", http_status=verified.status_code)
     # Caller owns this session. Tokens stay in memory for subsequent API requests.
     session.headers.update(headers)
     receipt["api_session_verified"] = True
@@ -140,6 +140,8 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
     receipt.update(success=False, api_session_verified=False, browser_password_posts=0,
                    http_password_posts=0, http_captcha_posts=0, phase_events=[],
                    model=MODEL, reasoning_effort="minimal")
+    receipt.pop("failure_stage", None)
+    receipt.pop("failure_http_status", None)
     interactions=None
     if optimize_interactions:
         from captcha.interactions import DynamicInteractions
@@ -265,14 +267,20 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         phase("http_password")
         receipt["http_password_posts"] = 1
         auth.submit_password(password, cpf, captcha_required=False)
-        phase("http_api_session")
+        phase("http_oauth_redirect")
         hops = auth.finish()
         receipt["oauth_callback_received"] = True
         receipt["redirect_hops"] = len(hops)
+        phase("http_api_session")
         verify_api(session, auth.authorization_code, cpf, receipt)
         receipt.update(success=True, code="ok")
         return receipt
-    except AuthError:
+    except AuthError as error:
+        events = receipt["phase_events"]
+        if events:
+            receipt["failure_stage"] = events[-1]["phase"]
+        if error.http_status is not None:
+            receipt["failure_http_status"] = error.http_status
         raise
     except browser_login.LoginError as error:
         raise AuthError(error.code) from None

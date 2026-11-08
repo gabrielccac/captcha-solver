@@ -62,10 +62,13 @@ def login_with_selection_retry(run, input_line):
         sys.stdin = io.StringIO(input_line)
         final = run()
         waits = receipt.get('selection_waits') or []
+        failed_selection = waits[-1] if waits else {}
         final['captcha_selection_retry'] = {
             'first_code': first['code'],
             'first_elapsed_ms': receipt.get('elapsed_ms'),
-            'first_failure_phase': waits[-1].get('failure_phase') if waits else None,
+            'first_failure_phase': failed_selection.get('failure_phase'),
+            'first_expected_selection': failed_selection.get('expected_selection'),
+            'first_observed_selection': failed_selection.get('observed_selection'),
             'first_password_posts': receipt['http_password_posts'] + receipt['browser_password_posts'],
             'first_captcha_posts': receipt['http_captcha_posts'],
             'recovered': bool(final.get('success')),
