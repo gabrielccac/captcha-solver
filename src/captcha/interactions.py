@@ -55,6 +55,16 @@ class DynamicInteractions:
         self.stable_ms=stable_ms
         self.metrics=[]
 
+    def begin_round(self, page):
+        return True
+
+    def click_tile(self, page, index, x, y):
+        self.click(page, x, y)
+        return True
+
+    def record_result(self):
+        pass
+
     @staticmethod
     def images_ready(crop, grid):
         # The calibrated 3x3 widget has instruction text above the grid.

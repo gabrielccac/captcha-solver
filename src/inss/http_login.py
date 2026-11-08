@@ -144,8 +144,9 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
     receipt.pop("failure_http_status", None)
     interactions=None
     if optimize_interactions:
-        from captcha.interactions import DynamicInteractions
-        interactions=DynamicInteractions(short_clicks=True)
+        from captcha.aria import AriaInteractions
+        interactions=AriaInteractions(short_clicks=True)
+        receipt['selection_backend']='aria_pressed'
     receipt['interaction_profile']='optimized' if optimize_interactions else 'reference'
     prefetched=None
     started = time.monotonic()

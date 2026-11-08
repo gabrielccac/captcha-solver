@@ -14,6 +14,9 @@ SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
 KEYS = ('GOVBR_CPF', 'GOVBR_PASSWORD', 'OPENROUTER_API_KEY')
 JEAN_SOURCE_MOUNTS = {'govbr.py': '/app/src/auth/govbr.py',
                       'http_login.py': '/app/src/inss/http_login.py',
+                      'aria.py': '/app/src/captcha/aria.py',
+                      'interactions.py': '/app/src/captcha/interactions.py',
+                      'hcaptcha.py': '/app/src/captcha/hcaptcha.py',
                       'query_worker.py': '/query_support.py'}
 
 

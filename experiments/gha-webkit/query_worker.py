@@ -56,6 +56,7 @@ def login_with_selection_retry(run, input_line):
         receipt = first.get('receipt') or {}
         posts = ('http_captcha_posts', 'http_password_posts', 'browser_password_posts')
         if (first.get('success') or first.get('code') != 'captcha_selection_not_confirmed'
+                or receipt.get('selection_backend') == 'aria_pressed'
                 or any(receipt.get(key) != 0 for key in posts)):
             return first
 

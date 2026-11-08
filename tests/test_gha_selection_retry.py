@@ -57,3 +57,10 @@ def test_retry_only_once_before_handoff(worker, final_code):
 def test_leaves_other_outcomes_alone(worker, code, receipt):
     outcomes = iter([{'success': code == 'ok', 'code': code, 'receipt': receipt}])
     assert worker.login_with_selection_retry(lambda: next(outcomes), 'fictitious')['code'] == code
+
+
+def test_aria_recovery_never_restarts_whole_login(worker):
+    outcome = {'success': False, 'code': 'captcha_selection_not_confirmed',
+               'receipt': {**POSTS, 'selection_backend': 'aria_pressed'}}
+    outcomes = iter([outcome])
+    assert worker.login_with_selection_retry(lambda: next(outcomes), 'fictitious') == outcome
