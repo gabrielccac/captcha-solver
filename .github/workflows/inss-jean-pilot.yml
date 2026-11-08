@@ -25,8 +25,13 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}
           QUERY_RECIPIENT_CERT: ${{ secrets.SMOKE_QUERY_RECIPIENT_CERT }}
         run: |
+          set -euo pipefail
+          export INSS_SOURCE_DIR="$(mktemp -d)"
+          trap 'rm -rf -- "$INSS_SOURCE_DIR"' EXIT
+          GH_TOKEN="$GHCR_TOKEN" gh api "repos/$GITHUB_REPOSITORY/tarball/$GITHUB_SHA" |
+            tar -xz --strip-components=1 -C "$INSS_SOURCE_DIR"
           python3 - <<'PY'
-          import hashlib,json,os,pathlib,re,runpy,tempfile,urllib.request
+          import json,os,pathlib,re,runpy,urllib.request
           job=os.environ.pop('JEAN_JOB_ID')
           assert re.fullmatch(r'[a-f0-9]{32}',job)
           class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -42,19 +47,9 @@ jobs:
           assert set(credentials)=={'GOVBR_CPF','GOVBR_PASSWORD'}
           os.environ.update(credentials)
           credentials.clear()
-          sources={'experiments/gha-webkit/query_run.py': '7752a686f14ed67b9241a1d7782547ea50bb13d9d8d99784d303bdf5c601940f', 'experiments/gha-webkit/query_worker.py': '35a63682751da37f0f7536e0901baf7c97cddbecf232f7403776b485cac7855c', 'experiments/gha-webkit/jean_worker.py': 'ad94e2ff5288644e925f7156e5a7c8ce0b4f802e7bcae4019c72bca1547341f4', 'src/auth/govbr.py': '258c93aa4d1960f58c030026a29ca2c531cf04980a4d107ea955bbf871d36316', 'src/inss/http_login.py': '2c3e6453027a98eadfa18d0287779711d0104e4a4ac1e7d831a7ad561b6314c0', 'src/captcha/aria.py': 'bc4e821930f8f5b438085f778448a15942c4a2bebb5fa46c4444ea5410ca94f9', 'src/captcha/interactions.py': '70b39750c8078c419fa0ccea3af34574f75c243d555a25821659de20cb458640', 'src/captcha/hcaptcha.py': '0694dbf2213ea8f743d05919885d09f05106ef57b856f9d4b0edbf3f42757a2e'}
-          with tempfile.TemporaryDirectory(prefix='jean-query-') as temporary:
-              root=pathlib.Path(temporary)
-              for path,expected in sources.items():
-                  url=f'https://api.github.com/repos/gabrielccac/captcha-solver/contents/{path}?ref=b4c6bc9e18bfe5222aee55c30ad4bd51bb04c122'
-                  request=urllib.request.Request(url,headers={'Accept':'application/vnd.github.raw+json',
-                      'Authorization':'Bearer '+os.environ['GHCR_TOKEN'],'X-GitHub-Api-Version':'2022-11-28'})
-                  with opener.open(request,timeout=30) as response:
-                      raw=response.read()
-                  assert hashlib.sha256(raw).hexdigest()==expected
-                  (root/pathlib.PurePosixPath(path).name).write_bytes(raw)
-              os.environ['QUERY_WORKER_FILE']='jean_worker.py'
-              runpy.run_path(str(root/'query_run.py'),run_name='__main__')
+          os.environ['QUERY_WORKER_FILE']='jean_worker.py'
+          runner=pathlib.Path(os.environ['INSS_SOURCE_DIR'])/'deploy/actions/query_run.py'
+          runpy.run_path(str(runner),run_name='__main__')
           PY
 
       - name: Upload recipient-encrypted output

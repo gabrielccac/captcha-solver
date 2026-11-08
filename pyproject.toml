@@ -29,4 +29,4 @@ inss-hosted = "inss.hosted:main"
 where = ["src"]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.27,<1"]

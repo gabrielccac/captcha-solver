@@ -130,6 +130,9 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
             return False, {**info, "why": "tiles-not-ready"}
         page.wait_for_timeout(300)
     info["capture_s"] = round(time.monotonic() - t0, 1)
+    if interactions is not None and not interactions.begin_round(page):
+        interactions.record_result()
+        return False, {**info, "why": "selection_not_confirmed"}
     t0 = time.monotonic()
     text_img, ref_img = split_header(crop, grid[1])
     text_img.save(os.path.join(out_dir, f"r{rnd}-text.png"))
@@ -181,7 +184,12 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
             grid = find_grid(crop)
         centers = tile_centers_page(boxes[0], clip, grid)
         x, y = centers[n - 1]
-        click_target(page, x, y)
+        if interactions is not None:
+            if not interactions.click_tile(page, n, x, y):
+                interactions.record_result()
+                return False, {**info, "why": "selection_not_confirmed"}
+        else:
+            click_target(page, x, y)
     if "stopped_at" in info:
         return False, {**info, "why": "interrupted-clicks"}
     boxes = vis_modal(page)

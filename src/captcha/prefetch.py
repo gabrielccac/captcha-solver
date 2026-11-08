@@ -60,6 +60,30 @@ def same_image(before, after, size):
     return sum(ImageStat.Stat(ImageChops.difference(before, after)).mean) / 3 <= 3
 
 
+def same_header(before, after):
+    if same_image(before, after, (128, 64)):
+        return True
+    if before is None or after is None or before.width != after.width:
+        return False
+    short, long = sorted((before.convert('RGB'), after.convert('RGB')), key=lambda image: image.height)
+    if not (32 <= short.height < long.height <= short.height + 16) or short.width < 128:
+        return False
+    # A focused grid can add a few border rows to an otherwise pixel-identical task crop.
+    if ImageChops.difference(short, long.crop((0, 0, short.width, short.height))).getbbox() is not None:
+        return False
+    margin = max(10, round(short.width * .025))
+    if any(low < 250 for low, high in short.crop((margin, short.height - 3, short.width - margin, short.height)).getextrema()):
+        return False
+    for y in range(short.height, long.height):
+        extrema = long.crop((margin, y, long.width - margin, y + 1)).getextrema()
+        if any(high - low > 2 for low, high in extrema):
+            return False
+        r, g, b = (low for low, high in extrema)
+        if not (min(r, g, b) >= 250 or (r < 10 and 120 <= g <= 145 and 130 <= b <= 155)):
+            return False
+    return True
+
+
 class PrefetchedSolver:
     def __init__(self, session, model_solver=None):
         self.session = session  # Dedicated vision transport; never the authenticated SSO session.
@@ -153,7 +177,7 @@ class PrefetchedSolver:
         matched = match_tiles(tiles, self.images.values())
         if self.disabled or matched is None or len({image.size for image in matched}) != 1:
             return self._fallback("mapping_unavailable", header, tiles, model, kwargs)
-        if self.header is not None and (not same_image(self.header, header, (128, 64))
+        if self.header is not None and (not same_header(self.header, header)
                 or not same_image(self.reference, ref_img, (128, 128))):
             self.predictions.clear()
             self.disabled = True

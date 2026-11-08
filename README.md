@@ -187,7 +187,7 @@ For the investigation, environment recipe, and reuse checklist, see
 ## Check
 
 ```bash
-uv run python -m unittest discover -s tests -v
+uv run --locked --extra hosted pytest -q
 ```
 
 After changes to browser, captcha, login, or API code, run the full CLI flow
@@ -206,3 +206,20 @@ REST e MCP Streamable HTTP compartilham sessões criptografadas, renovação SSO
 um catálogo de endpoints permitidos. Veja o [contrato e a implantação](docs/hosted-api.md)
 e os arquivos em `deploy/`. A imagem fixa o Chrome e as fontes validados; não usa
 o Selenium/Chromium de outros serviços do host.
+
+## Perfis do Meu INSS
+
+O login, os detectores de seleção e as consultas compartilham o código em
+`src/auth`, `src/captcha` e `src/inss`.
+
+- **Chrome/CDP** usa o perfil do CLI e do serviço hospedado. O modo de interação
+  rápida usa o detector visual, com as correções da grade e da espera por
+  estabilidade.
+- **WebKit** usa a imagem fixada em `deploy/actions/query_run.py`. A consulta
+  privada e o piloto do Jean carregam o código do commit executado e verificam
+  as seleções por `aria-pressed` dentro do iframe. Um retry por imagem é permitido
+  apenas quando a seleção continua desmarcada no mesmo desafio.
+
+Os workflows do Actions entregam resultados criptografados. Uma recusa explícita
+de credencial ou exigência de 2FA é registrada como `client_action_required`,
+com o código original. Um erro técnico faz o job falhar.
