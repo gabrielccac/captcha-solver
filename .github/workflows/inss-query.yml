@@ -1,28 +1,35 @@
-name: Meu INSS - consulta privada
+name: Meu INSS - autenticação privada
 run-name: INSS n8n ${{ inputs.request_id }}
 on:
   workflow_dispatch:
     inputs:
       request_id:
-        description: Identificador opaco da consulta
+        description: Identificador opaco da autenticação
         required: true
+        type: string
+      job_id:
+        description: Referência de uso único para obter credenciais do relay configurado
         type: string
 permissions:
   contents: read
   packages: read
 concurrency:
-  group: n8n-inss-query
+  group: ${{ inputs.job_id && format('inss-query-{0}', inputs.job_id) || 'n8n-inss-query' }}
   cancel-in-progress: false
 jobs:
   query:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 8
-    environment: n8n-inss-query
+    environment: ${{ (inputs.job_id && vars.INSS_RELAY_ENVIRONMENT) || 'n8n-inss-query' }}
     steps:
-      - name: Login and query using the approved immutable browser image
+      - name: Authenticate and export encrypted API credentials
         env:
           GHCR_TOKEN: ${{ github.token }}
+          INSS_JOB_ID: ${{ inputs.job_id }}
+          INSS_CLAIM_URL: ${{ vars.INSS_CLAIM_URL }}
+          INSS_CLAIM_BEARER: ${{ secrets[vars.INSS_CLAIM_SECRET_NAME || 'INSS_CLAIM_BEARER'] }}
+          QUERY_WORKER_FILE: auth_worker.py
           GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
           GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
           OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}

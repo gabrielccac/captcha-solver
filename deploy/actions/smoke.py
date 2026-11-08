@@ -27,7 +27,7 @@ def counters():
             int((root / 'memory/memory.max_usage_in_bytes').read_text()))
 
 
-def main():
+def main(*, on_authenticated=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--offline-preflight', action='store_true')
     args = parser.parse_args()
@@ -95,6 +95,8 @@ def main():
                 claims = token_claims(client.headers['Authorization'].removeprefix('Bearer '))
                 result['access_token_remaining_seconds'] = round(claims['exp']-time.time())
                 assert result['access_token_remaining_seconds'] > 0
+                if on_authenticated is not None:
+                    on_authenticated(client, cpf)
                 result.update(success=True,code='ok')
     except AuthError as error:
         result.update(code=error.code,error_type=type(error).__name__)
