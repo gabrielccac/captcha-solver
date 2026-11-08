@@ -27,7 +27,7 @@ def counters():
             int((root / 'memory/memory.max_usage_in_bytes').read_text()))
 
 
-def main(*, on_authenticated=None):
+def main(*, on_authenticated=None, credentials=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--offline-preflight', action='store_true')
     args = parser.parse_args()
@@ -76,7 +76,7 @@ def main(*, on_authenticated=None):
                     context.close()
             result.update(success=True,code='offline_preflight_passed')
         else:
-            values = json.loads(sys.stdin.readline())
+            values = json.loads(sys.stdin.readline()) if credentials is None else dict(credentials)
             assert set(values) == {'GOVBR_CPF','GOVBR_PASSWORD','OPENROUTER_API_KEY'}
             cpf = ''.join(c for c in values['GOVBR_CPF'] if c in '0123456789')
             http_login.ManagedBrowser = Manager
