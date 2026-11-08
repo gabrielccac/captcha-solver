@@ -12,7 +12,7 @@ import time
 IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62e6266bad61e67eaa62eb2ca6f69493b1801d9077e2e2b117693c61c28d5571'
 SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
 KEYS = ('GOVBR_CPF', 'GOVBR_PASSWORD', 'OPENROUTER_API_KEY')
-JEAN_CLIENT_ACTIONS = {'invalid_credentials', 'two_factor_required'}
+CLIENT_ACTION_CODES = {'invalid_credentials', 'two_factor_required'}
 JEAN_SOURCE_MOUNTS = {'govbr.py': '/app/src/auth/govbr.py',
                       'http_login.py': '/app/src/inss/http_login.py',
                       'aria.py': '/app/src/captcha/aria.py',
@@ -110,16 +110,19 @@ def main():
             payload = json.loads(raw)
             report = summary(payload)
             report['worker_returncode'] = process.returncode
-            if worker == 'jean_worker.py':
-                if report['success']:
+            if worker in ('query_worker.py', 'jean_worker.py'):
+                if process.returncode == 0 and report['success']:
                     report['result_class'] = 'authenticated'
-                elif process.returncode == 3 and report['code'] in JEAN_CLIENT_ACTIONS:
+                elif process.returncode == 3 and not report['success'] and report['code'] in CLIENT_ACTION_CODES:
                     report['result_class'] = 'client_action_required'
                 else:
                     report['result_class'] = 'technical_failure'
+                payload['validation']['result_class'] = report['result_class']
+            if worker == 'jean_worker.py':
                 payload['client_data']['login_diagnostics'] = {key: report[key] for key in (
                     'result_class', 'failure_stage', 'failure_http_status', 'captcha_selection', 'captcha_selection_retry',
                 ) if key in report}
+            if 'result_class' in report:
                 raw = json.dumps(payload).encode()
             # Only authenticated ciphertext can leave the runner as an artifact.
             (output / 'result.cms').write_bytes(encrypt(raw, recipient))
@@ -140,7 +143,8 @@ def main():
         (output / 'receipt.json').write_text(rendered)
         values.clear()
         print('SMOKE_RESULT ' + rendered, flush=True)
-    return 0 if result['success'] or result.get('result_class') == 'client_action_required' else 3
+    completed = result['success'] and result.get('worker_returncode') == 0
+    return 0 if completed or result.get('result_class') == 'client_action_required' else 3
 
 
 if __name__ == '__main__':
