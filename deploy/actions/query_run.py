@@ -4,10 +4,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import threading
 import time
+from urllib.parse import urlsplit
+from urllib.request import build_opener, HTTPRedirectHandler, Request
 
 IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62e6266bad61e67eaa62eb2ca6f69493b1801d9077e2e2b117693c61c28d5571'
 SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
@@ -15,6 +18,38 @@ KEYS = ('GOVBR_CPF', 'GOVBR_PASSWORD', 'OPENROUTER_API_KEY')
 CLIENT_ACTION_CODES = {'invalid_credentials', 'two_factor_required'}
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_DIR = Path(__file__).resolve().parent
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        return None
+
+
+def credentials():
+    values = {key: os.environ.pop(key, '') for key in KEYS}
+    job_id = os.environ.pop('INSS_JOB_ID', '')
+    url = os.environ.pop('INSS_CLAIM_URL', '')
+    bearer = os.environ.pop('INSS_CLAIM_BEARER', '')
+    if job_id:
+        parts = urlsplit(url)
+        if (not re.fullmatch(r'[a-f0-9]{32}', job_id) or not bearer
+                or parts.scheme != 'https' or not parts.hostname or parts.username
+                or parts.password or parts.query or parts.fragment):
+            raise ValueError('invalid_claim_configuration')
+        request = Request(url, data=json.dumps({'job_id': job_id}).encode(),
+                          headers={'Authorization': 'Bearer ' + bearer, 'Content-Type': 'application/json'})
+        with build_opener(NoRedirect).open(request, timeout=15) as response:
+            raw = response.read(4097)
+        if len(raw) > 4096:
+            raise ValueError('invalid_claim_response')
+        claimed = json.loads(raw)
+        if (not isinstance(claimed, dict) or set(claimed) != {'GOVBR_CPF', 'GOVBR_PASSWORD'}
+                or not all(isinstance(v, str) and v for v in claimed.values())):
+            raise ValueError('invalid_claim_response')
+        values.update(claimed)
+    if not all(values.values()):
+        raise ValueError('missing_credentials')
+    return values
 
 
 def encrypt(payload, certificate):
@@ -38,7 +73,8 @@ def summary(payload):
         'credits_http_status': data.get('credits', {}).get('http_status'),
         'benefit_count': len(data.get('benefits', [])),
         'credit_count': len(credits.get('creditosTO', [])) if isinstance(credits, dict) else None,
-        'encrypted_result': True, 'raw_tokens_exported': False}
+        'encrypted_result': True, 'raw_tokens_exported': False,
+        'api_credentials_encrypted': 'api_credentials' in data}
     if 'captcha_selection_retry' in validation:
         result['captcha_selection_retry'] = validation['captcha_selection_retry']
     for key in ('failure_stage', 'failure_http_status'):
@@ -52,11 +88,11 @@ def summary(payload):
 
 
 def main():
-    values = {key: os.environ.pop(key) for key in KEYS}
+    values = {}
     token = os.environ.pop('GHCR_TOKEN')
     certificate = os.environ.pop('QUERY_RECIPIENT_CERT')
-    worker = os.environ.pop('QUERY_WORKER_FILE', 'query_worker.py')
-    assert worker in ('query_worker.py', 'jean_worker.py')
+    worker = os.environ.pop('QUERY_WORKER_FILE', 'auth_worker.py')
+    assert worker in ('auth_worker.py', 'jean_worker.py')
     previous_config = os.environ.get('DOCKER_CONFIG')
     name, process, timer = 'inss-private-query', None, None
     result = {'success': False, 'code': 'query_launch_failed', 'encrypted_result': False}
@@ -64,6 +100,7 @@ def main():
     output.mkdir(exist_ok=False)
     started = time.monotonic()
     try:
+        values = credentials()
         with tempfile.TemporaryDirectory(prefix='private-query-') as temporary:
             root = Path(temporary)
             os.environ['DOCKER_CONFIG'] = str(root)
@@ -98,6 +135,13 @@ def main():
             raw, _ = process.communicate((json.dumps(values) + '\n').encode(), timeout=260)
             assert len(raw) <= 5_000_000
             payload = json.loads(raw)
+            if worker == 'auth_worker.py':
+                validation, data = payload['validation'], payload['client_data']
+                if process.returncode == 0 and validation.get('success'):
+                    if validation.get('independent_api_http_status') != 200 or not data.get('api_credentials'):
+                        raise ValueError('unverified_credentials')
+                else:
+                    data.pop('api_credentials', None)
             report = summary(payload)
             report['worker_returncode'] = process.returncode
             if process.returncode == 0 and report['success']:
@@ -107,10 +151,9 @@ def main():
             else:
                 report['result_class'] = 'technical_failure'
             payload['validation']['result_class'] = report['result_class']
-            if worker == 'jean_worker.py':
-                payload['client_data']['login_diagnostics'] = {key: report[key] for key in (
-                    'result_class', 'failure_stage', 'failure_http_status', 'captcha_selection', 'captcha_selection_retry',
-                ) if key in report}
+            payload['client_data']['login_diagnostics'] = {key: report[key] for key in (
+                'result_class', 'failure_stage', 'failure_http_status', 'captcha_selection', 'captcha_selection_retry',
+            ) if key in report}
             raw = json.dumps(payload).encode()
             # Only authenticated ciphertext can leave the runner as an artifact.
             (output / 'result.cms').write_bytes(encrypt(raw, recipient))
