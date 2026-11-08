@@ -64,19 +64,12 @@ def summary(payload):
     validation = payload['validation']
     receipt = validation.get('receipt', {})
     data = payload.get('client_data', {})
-    credits = data.get('credits', {}).get('data', {})
     result = {'success': validation.get('success', False), 'code': validation.get('code'),
         'login_ms': receipt.get('elapsed_ms'),
         'worker_ms': validation.get('elapsed_ms'),
         'inss_http_status': validation.get('independent_api_http_status'),
-        'userinfo_http_status': data.get('userinfo', {}).get('http_status'),
-        'credits_http_status': data.get('credits', {}).get('http_status'),
-        'benefit_count': len(data.get('benefits', [])),
-        'credit_count': len(credits.get('creditosTO', [])) if isinstance(credits, dict) else None,
         'encrypted_result': True, 'raw_tokens_exported': False,
         'api_credentials_encrypted': 'api_credentials' in data}
-    if 'captcha_selection_retry' in validation:
-        result['captcha_selection_retry'] = validation['captcha_selection_retry']
     for key in ('failure_stage', 'failure_http_status'):
         if key in receipt:
             result[key] = receipt[key]
@@ -91,8 +84,6 @@ def main():
     values = {}
     token = os.environ.pop('GHCR_TOKEN')
     certificate = os.environ.pop('QUERY_RECIPIENT_CERT')
-    worker = os.environ.pop('QUERY_WORKER_FILE', 'auth_worker.py')
-    assert worker in ('auth_worker.py', 'jean_worker.py')
     previous_config = os.environ.get('DOCKER_CONFIG')
     name, process, timer = 'inss-private-query', None, None
     result = {'success': False, 'code': 'query_launch_failed', 'encrypted_result': False}
@@ -121,12 +112,10 @@ def main():
                 '--security-opt', 'seccomp=' + str(root / 'seccomp.json')]
             mounts = {SOURCE_ROOT / 'src': '/app/src'}
             mounts[RUNNER_DIR / 'smoke.py'] = '/app/experiments/gha-webkit/smoke.py'
-            mounts[RUNNER_DIR / worker] = '/query_worker.py'
-            if worker == 'jean_worker.py':
-                mounts[RUNNER_DIR / 'query_worker.py'] = '/query_support.py'
+            mounts[RUNNER_DIR / 'auth_worker.py'] = '/auth_worker.py'
             for source, target in mounts.items():
                 command += ['--mount', f'type=bind,src={source},dst={target},readonly']
-            command += ['--entrypoint', 'python', IMAGE, '-u', '/query_worker.py']
+            command += ['--entrypoint', 'python', IMAGE, '-u', '/auth_worker.py']
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.DEVNULL)
             timer = threading.Timer(240, lambda: subprocess.run(['docker', 'rm', '-f', name],
@@ -135,13 +124,12 @@ def main():
             raw, _ = process.communicate((json.dumps(values) + '\n').encode(), timeout=260)
             assert len(raw) <= 5_000_000
             payload = json.loads(raw)
-            if worker == 'auth_worker.py':
-                validation, data = payload['validation'], payload['client_data']
-                if process.returncode == 0 and validation.get('success'):
-                    if validation.get('independent_api_http_status') != 200 or not data.get('api_credentials'):
-                        raise ValueError('unverified_credentials')
-                else:
-                    data.pop('api_credentials', None)
+            validation, data = payload['validation'], payload['client_data']
+            if process.returncode == 0 and validation.get('success'):
+                if validation.get('independent_api_http_status') != 200 or not data.get('api_credentials'):
+                    raise ValueError('unverified_credentials')
+            else:
+                data.pop('api_credentials', None)
             report = summary(payload)
             report['worker_returncode'] = process.returncode
             if process.returncode == 0 and report['success']:
@@ -152,7 +140,7 @@ def main():
                 report['result_class'] = 'technical_failure'
             payload['validation']['result_class'] = report['result_class']
             payload['client_data']['login_diagnostics'] = {key: report[key] for key in (
-                'result_class', 'failure_stage', 'failure_http_status', 'captcha_selection', 'captcha_selection_retry',
+                'result_class', 'failure_stage', 'failure_http_status', 'captcha_selection',
             ) if key in report}
             raw = json.dumps(payload).encode()
             # Only authenticated ciphertext can leave the runner as an artifact.
