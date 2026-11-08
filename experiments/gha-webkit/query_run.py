@@ -46,7 +46,7 @@ def main():
     certificate = os.environ.pop('QUERY_RECIPIENT_CERT')
     worker = os.environ.pop('QUERY_WORKER_FILE', 'query_worker.py')
     mode = os.environ.pop('COMPARE_MODE', 'none')
-    assert worker in ('query_worker.py', 'compare_worker.py')
+    assert worker in ('query_worker.py', 'compare_worker.py', 'jean_worker.py')
     assert mode in ('none', 'screenshot', 'network')
     previous_config = os.environ.get('DOCKER_CONFIG')
     name, process, timer = 'inss-private-query', None, None
@@ -79,8 +79,11 @@ def main():
                 '--pids-limit', '320', '--shm-size', '128m', '--tmpfs', '/tmp:rw,nosuid,size=512m,mode=1777',
                 '--security-opt', 'seccomp=' + str(root / 'seccomp.json'),
                 '--env', 'COMPARE_MODE=' + mode,
-                '--mount', 'type=bind,src=' + str(Path(__file__).with_name(worker).resolve()) + ',dst=/query_worker.py,readonly',
-                '--entrypoint', 'python', IMAGE, '-u', '/query_worker.py']
+                '--mount', 'type=bind,src=' + str(Path(__file__).with_name(worker).resolve()) + ',dst=/query_worker.py,readonly']
+            if worker == 'jean_worker.py':
+                command += ['--mount', 'type=bind,src=' + str(Path(__file__).with_name('query_worker.py').resolve())
+                            + ',dst=/query_support.py,readonly']
+            command += ['--entrypoint', 'python', IMAGE, '-u', '/query_worker.py']
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.DEVNULL)
             timer = threading.Timer(240, lambda: subprocess.run(['docker', 'rm', '-f', name],
