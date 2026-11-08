@@ -7,7 +7,7 @@ import pytest
 import requests
 
 from auth.handoff import CaptchaHandoff, password_page
-from auth.govbr import AuthError
+from auth.govbr import AuthError, GovBrAuth
 from inss.http_login import load_env_file, verify_api
 from inss import http_login
 
@@ -21,7 +21,7 @@ def no_network(monkeypatch):
 
 def test_env_file_is_read_as_data_without_evaluation(tmp_path):
     path = tmp_path / ".env"
-    path.write_text('# comentário\nGOVBR_CPF=00000000000\nGOVBR_PASSWORD="fixture@password"\nOPENROUTER_API_KEY=fixture-key\n', encoding="utf-8")
+    path.write_text('# comentÃ¡rio\nGOVBR_CPF=00000000000\nGOVBR_PASSWORD="fixture@password"\nOPENROUTER_API_KEY=fixture-key\n', encoding="utf-8")
     loaded = load_env_file(path)
     assert loaded["GOVBR_PASSWORD"] == "fixture@password"
     assert loaded["OPENROUTER_API_KEY"] == "fixture-key"
@@ -127,6 +127,75 @@ def test_api_rejects_wrong_identity_before_bootstrap():
     session.get.assert_called_once()
 
 
+@pytest.mark.parametrize("failure", [None, "sso_login_required", "authenticated_identity_mismatch",
+                                     "network_error", "runtime_error"])
+def test_http_renewal_preserves_old_state_on_failure_and_never_starts_browser(monkeypatch, failure):
+    real_session = requests.Session
+    original, sso, api = real_session(), real_session(), real_session()
+    original.headers.update({"User-Agent": "fixture-actual-ua", "Authorization": "Bearer expired-fixture",
+                             "miToken": "private-old-mi"})
+    original.cookies.set("fixture_sso", "private-old-cookie", domain="sso.acesso.gov.br", secure=True)
+    before_headers, before_cookies = dict(original.headers), original.cookies.get_dict()
+    clients = iter([sso, api])
+    monkeypatch.setattr(http_login.requests, "Session", lambda: next(clients))
+    browser = Mock(side_effect=AssertionError("renewal cannot start browser"))
+    monkeypatch.setattr(http_login, "ManagedBrowser", browser)
+    auth = Mock(authorization_code="fresh-fixture-code")
+
+    def authorize():
+        assert "Authorization" not in sso.headers and "miToken" not in sso.headers
+        assert sso.headers["User-Agent"] == "fixture-actual-ua"
+        assert sso.cookies.get("fixture_sso") == "private-old-cookie"
+        sso.cookies.set("fixture_sso", "private-rotated-cookie", domain="sso.acesso.gov.br", secure=True)
+        if failure == "sso_login_required":
+            raise AuthError(failure)
+        if failure == "network_error":
+            raise requests.Timeout("private-url-cookie-details")
+        if failure == "runtime_error":
+            raise RuntimeError("private-url-cookie-details")
+        return [("https://meu.inss.gov.br/", 200)]
+
+    auth.resume.side_effect = authorize
+    monkeypatch.setattr(http_login, "GovBrAuth", lambda *a, **kw: auth)
+
+    def verify(client, code, cpf, receipt):
+        assert client is api and code == "fresh-fixture-code"
+        if failure == "authenticated_identity_mismatch":
+            raise AuthError(failure)
+        api.headers.update({"Authorization": "Bearer private-new-access", "miToken": "private-new-mi"})
+        receipt.update(authenticated_endpoint_http_status=200, api_session_verified=True)
+
+    monkeypatch.setattr(http_login, "verify_api", verify)
+    receipt = {}
+    if failure is None:
+        http_login.renew(original, "00000000000", receipt=receipt)
+        assert original.headers["Authorization"] == "Bearer private-new-access"
+        assert original.headers["miToken"] == "private-new-mi"
+        assert original.cookies.get("fixture_sso") == "private-rotated-cookie"
+        assert receipt["success"] and receipt["access_token_changed"]
+    else:
+        code = "renewal_runtime_error" if failure == "runtime_error" else failure
+        with pytest.raises(AuthError, match="^" + code + "$"):
+            http_login.renew(original, "00000000000", receipt=receipt)
+        assert dict(original.headers) == before_headers
+        assert original.cookies.get_dict() == before_cookies
+        assert not receipt["success"]
+    browser.assert_not_called()
+    assert receipt["http_password_posts"] == receipt["browser_password_posts"] == 0
+    assert "private" not in json.dumps(receipt)
+    original.close()
+
+
+def test_http_renewal_requires_sso_context_before_network(monkeypatch):
+    with requests.Session() as session:
+        session.headers.update(Authorization="Bearer fixture", miToken="fixture")
+        factory = Mock()
+        monkeypatch.setattr(http_login.requests, "Session", factory)
+        with pytest.raises(AuthError, match="sso_session_missing"):
+            http_login.renew(session, "00000000000")
+        factory.assert_not_called()
+
+
 @pytest.mark.parametrize("url", ["http://sso.acesso.gov.br/login",
     "https://sso.acesso.gov.br.evil.invalid/login", "https://sso.acesso.gov.br:444/login",
     "https://private@sso.acesso.gov.br/login"])
@@ -153,13 +222,17 @@ def test_failed_post_cannot_reuse_captcha():
 
 def test_password_form_required_after_captcha():
     response = SimpleNamespace(url="https://sso.acesso.gov.br/login", status_code=200,
-                               text="<html>captcha inválido</html>")
+                               text="<html>captcha invÃ¡lido</html>")
     with pytest.raises(AuthError, match="captcha_http_not_accepted"):
         password_page(Mock(), response)
 
 
 @pytest.mark.parametrize('deferred_capture', [False, True])
-def test_integrated_login_closes_browser_before_http_password(monkeypatch, deferred_capture):
+@pytest.mark.parametrize('optimized',[False,True])
+@pytest.mark.parametrize('batch',[False,True])
+@pytest.mark.parametrize('failure_stage', [None, 'http_consume_captcha', 'http_password', 'http_oauth_redirect'])
+def test_integrated_login_closes_browser_before_http_password(monkeypatch, deferred_capture,optimized,batch,
+                                                            failure_stage):
     events = []
     page, browser, manager = MagicMock(), MagicMock(), Mock()
     manager.start.return_value = "http://127.0.0.1:1234"
@@ -172,9 +245,15 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
     monkeypatch.setattr(http_login, "sync_playwright", lambda: pw)
     monkeypatch.setattr(http_login, "ManagedBrowser", lambda *a, **kw: manager)
     monkeypatch.setattr(http_login.browser_login, "goto_login", lambda p: None)
-    monkeypatch.setattr(http_login.browser_login, "submit_cpf", lambda *a: None)
+    monkeypatch.setattr(http_login.browser_login, "submit_cpf", lambda *a,**kw: None)
     monkeypatch.setattr(http_login.hcaptcha, "vis_modal", lambda p: True)
     monkeypatch.setattr(http_login, "adopt", lambda *a: None)
+    prefetched=Mock()
+    prefetched.statistics.return_value={'enabled':True,'model_calls':0}
+    if batch:
+        from captcha import prefetch
+        monkeypatch.setattr(prefetch,'PrefetchedSolver',lambda transport:prefetched)
+        monkeypatch.setattr(http_login.requests,'Session',MagicMock())
 
     def capture():
         callback = page.route.call_args.args[1]
@@ -182,6 +261,9 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
             post_data="token=" + "A" * 40, headers={})))
 
     def solve(*args, **kwargs):
+        if not batch:
+            assert kwargs["vision_session"] is not session
+            assert not kwargs["vision_session"].headers.get("Authorization")
         if deferred_capture:
             page.wait_for_selector.side_effect = lambda *a, **kw: capture()
         else:
@@ -189,26 +271,51 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
         return True, {"round": 0, "solve_s": 1}
 
     monkeypatch.setattr(http_login.hcaptcha, "solve_round", solve)
-    monkeypatch.setattr(http_login, "password_page", lambda *a: Mock())
+    failure = SimpleNamespace(status_code=503, url="https://sso.acesso.gov.br/login",
+                              text="fixture-secret-response")
+    if failure_stage != "http_consume_captcha":
+        monkeypatch.setattr(http_login, "password_page", lambda *a: Mock())
     auth = Mock(authorization_code="fixture-code")
     auth.finish.return_value = [("https://meu.inss.gov.br/", 200)]
+    if failure_stage == "http_oauth_redirect":
+        auth.finish.side_effect = lambda: GovBrAuth._check_response(failure)
 
     def password(*args, **kwargs):
         assert events == ["browser_closed", "manager_stopped"]
         assert kwargs == {"captcha_required": False}
         events.append("http_password")
+        if failure_stage == "http_password":
+            GovBrAuth._check_response(failure)
 
     auth.submit_password.side_effect = password
     monkeypatch.setattr(http_login, "GovBrAuth", lambda *a, **kw: auth)
     monkeypatch.setattr(http_login, "verify_api", lambda *a: a[-1].update(api_session_verified=True))
     session = Mock(headers={}, cookies={})
-    session.post.return_value = Response()
-    receipt = http_login.login(session, "00000000000", "fixture-password", "fixture-key")
+    session.post.return_value = failure if failure_stage == "http_consume_captcha" else Response()
+    if failure_stage:
+        receipt = {}
+        with pytest.raises(AuthError, match="^http_error$"):
+            http_login.login(session, "00000000000", "fixture-password", "fixture-key", receipt=receipt,
+                            optimize_interactions=optimized, batch_captcha=batch)
+        assert receipt["failure_stage"] == failure_stage
+        assert receipt["failure_http_status"] == 503
+        assert receipt["http_password_posts"] == (failure_stage != "http_consume_captcha")
+        assert auth.submit_password.call_count == receipt["http_password_posts"]
+        assert auth.finish.call_count == (failure_stage == "http_oauth_redirect")
+        assert "fixture-secret-response" not in json.dumps(receipt)
+        session.post.assert_called_once()
+        return
+    receipt = http_login.login(session, "00000000000", "fixture-password", "fixture-key",optimize_interactions=optimized,batch_captcha=batch)
     assert receipt["success"] and receipt["api_session_verified"]
     assert receipt["browser_password_posts"] == 0 and receipt["http_password_posts"] == 1
     session.post.assert_called_once()
     assert events[-1] == "http_password"
     manager.start.assert_called_once_with(wait_ready=True)
+    assert receipt['interaction_profile']==('optimized' if optimized else 'reference')
+    if batch:
+        prefetched.attach.assert_called_once_with(page)
+        prefetched.close.assert_called_once()
+        assert receipt['captcha_batch']['enabled']
 
 
 @pytest.mark.parametrize("error,code", [(AuthError("two_factor_required"), "two_factor_required"),
@@ -236,7 +343,9 @@ def test_cli_rejects_secret_arguments_without_echo(monkeypatch, capsys):
     assert "fixture-secret" not in capsys.readouterr().err
 
 
-def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch, tmp_path):
+@pytest.mark.parametrize('fast',[False,True])
+@pytest.mark.parametrize('batch',[False,True])
+def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch, tmp_path,fast,batch):
     import importlib.util
     from pathlib import Path
     import sys
@@ -247,7 +356,8 @@ def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch,
     env = tmp_path / ".env"
     env.write_text("GOVBR_PASSWORD=fixture-secret", encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["govbr_http_docker.py", "--env-file", str(env),
-                                    "--out", str(tmp_path / "out")])
+                                    "--out", str(tmp_path / "out")]+(['--fast-interactions'] if fast else [])
+                                    +(['--batch-captcha'] if batch else []))
     monkeypatch.setattr(launcher.os, "getuid", lambda: 1000, raising=False)
     monkeypatch.setattr(launcher.os, "getgid", lambda: 1000, raising=False)
     run = Mock(return_value=SimpleNamespace(returncode=0))
@@ -258,6 +368,8 @@ def test_docker_launcher_mounts_credentials_readonly_without_values(monkeypatch,
     assert "fixture-secret" not in repr(command)
     assert "--env" not in command and "--env-file" not in command[:command.index("inss-login-http")]
     assert "--read-only" in command and "--publish" not in command
+    assert ('--fast-interactions' in command)==fast
+    assert ('--batch-captcha' in command)==batch
 
 
 def test_solver_accepts_explicit_key_without_modifying_environment(monkeypatch):
@@ -281,3 +393,29 @@ def test_library_errors_hide_browser_payloads(monkeypatch):
     with requests.Session() as session, pytest.raises(AuthError, match="^browser_error$") as error:
         http_login.login(session, "00000000000", "fixture-password", "fixture-key")
     assert error.value.__suppress_context__
+
+
+def test_unconfirmed_selection_stops_without_reclick_or_password(monkeypatch):
+    import pytest
+    from unittest.mock import MagicMock
+    from types import SimpleNamespace
+    from inss import http_login
+    from auth.govbr import AuthError
+    page,browser,manager=MagicMock(),MagicMock(),Mock()
+    browser.contexts=[SimpleNamespace(pages=[page])]
+    pw=MagicMock()
+    pw.__enter__.return_value.chromium.connect_over_cdp.return_value=browser
+    monkeypatch.setattr(http_login,'sync_playwright',lambda:pw)
+    monkeypatch.setattr(http_login,'ManagedBrowser',lambda *a,**kw:manager)
+    monkeypatch.setattr(http_login.browser_login,'goto_login',Mock())
+    monkeypatch.setattr(http_login.browser_login,'submit_cpf',Mock())
+    monkeypatch.setattr(http_login.hcaptcha,'vis_modal',lambda p:True)
+    solve=Mock(return_value=(False,{'why':'selection_not_confirmed'}))
+    monkeypatch.setattr(http_login.hcaptcha,'solve_round',solve)
+    session=Mock(headers={},cookies={})
+    with pytest.raises(AuthError,match='captcha_selection_not_confirmed'):
+        http_login.login(session,'00000000000','fixture-password','fixture-key')
+    solve.assert_called_once()
+    session.post.assert_not_called()
+    browser.close.assert_called_once()
+    manager.stop.assert_called_once()

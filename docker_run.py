@@ -30,7 +30,7 @@ def main():
         parser.error("Docker manages its own browser and temporary profile")
     command = [
         "docker", "run", "--rm", "--init",
-        "--user", f"{os.getuid()}:{os.getgid()}",
+        "--user", f"{os.getuid() if hasattr(os, 'getuid') else 1000}:{os.getgid() if hasattr(os, 'getgid') else 1000}",
         "--security-opt", f"seccomp={ROOT / 'docker-seccomp.json'}", "--shm-size", "1g",
         "--env-file", str(ROOT / ".env"),
         "--mount", f"type=bind,src={runs},dst=/app/runs",

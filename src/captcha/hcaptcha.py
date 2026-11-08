@@ -103,7 +103,8 @@ def tiles_ready(crop, grid):
 
 
 def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
-                success_selector=None, *, api_key=None):
+                success_selector=None, *, api_key=None, interactions=None, vision_solver=None,
+                vision_session=None):
     """One extract->solve->click round. Returns (done_bool, info_dict)."""
     info = {"round": rnd}
     t0 = time.monotonic()
@@ -121,12 +122,17 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
             return False, {**info, "why": "shot-fail"}
         crop = Image.open(shot_path).copy()
         grid = find_grid(crop)
-        if tiles_ready(crop, grid):
+        if (tiles_ready(crop, grid)
+                and (interactions is None or interactions.images_ready(crop,grid))
+                and (vision_solver is None or vision_solver.images_ready(crop,grid))):
             break
         if time.monotonic() >= deadline:
             return False, {**info, "why": "tiles-not-ready"}
         page.wait_for_timeout(300)
     info["capture_s"] = round(time.monotonic() - t0, 1)
+    if interactions is not None and not interactions.begin_round(page):
+        interactions.record_result()
+        return False, {**info, "why": "selection_not_confirmed"}
     t0 = time.monotonic()
     text_img, ref_img = split_header(crop, grid[1])
     text_img.save(os.path.join(out_dir, f"r{rnd}-text.png"))
@@ -141,7 +147,10 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
     usage = {}
     try:
         kwargs = {"api_key": api_key} if api_key is not None else {}
-        idx = solve(text_img, tiles, model, ref_img=ref_img,
+        if vision_solver is None and vision_session is not None:
+            kwargs["session"] = vision_session
+        solve_images = vision_solver if vision_solver is not None else solve
+        idx = solve_images(text_img, tiles, model, ref_img=ref_img,
                     reasoning_effort=reasoning_effort, usage=usage, **kwargs)
     except Exception as e:
         info["solve_s"] = round(time.monotonic() - t0, 1)
@@ -155,6 +164,9 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
     info["solve_s"] = round(time.monotonic() - t0, 1)
     if not idx:
         return False, {**info, "why": "empty-picks"}
+    if interactions is not None:
+        interactions.prepare(crop,grid,idx)
+    click_target=interactions.click if interactions is not None else click
     t0 = time.monotonic()
     for n in idx:
         boxes = wait_modal(page, timeout_s=10)
@@ -172,7 +184,12 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
             grid = find_grid(crop)
         centers = tile_centers_page(boxes[0], clip, grid)
         x, y = centers[n - 1]
-        click(page, x, y)
+        if interactions is not None:
+            if not interactions.click_tile(page, n, x, y):
+                interactions.record_result()
+                return False, {**info, "why": "selection_not_confirmed"}
+        else:
+            click_target(page, x, y)
     if "stopped_at" in info:
         return False, {**info, "why": "interrupted-clicks"}
     boxes = vis_modal(page)
@@ -181,8 +198,11 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
         ax = clip["x"] + clip["width"] - 58
         ay = clip["y"] + clip["height"] - 38
         # settle: let widget register all toggles before submitting (race fix)
-        page.wait_for_timeout(2500)
-        click(page, ax, ay)
+        if interactions is None:
+            page.wait_for_timeout(2500)
+        elif not interactions.wait_ready(page,clip):
+            return False, {**info, "why":"selection_not_confirmed"}
+        click_target(page, ax, ay)
         info["submitted"] = True
     else:
         info["submitted"] = False

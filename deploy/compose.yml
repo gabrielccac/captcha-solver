@@ -1,0 +1,34 @@
+services:
+  api:
+    image: meu-inss-hosted:1.0.0
+    init: true
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    cpus: 1
+    mem_limit: 1400m
+    memswap_limit: 1400m
+    pids_limit: 320
+    shm_size: 128m
+    stop_grace_period: 20s
+    tmpfs:
+      - /tmp:rw,nosuid,size=512m,mode=1777
+    security_opt:
+      - seccomp=./seccomp.json
+    ports:
+      - "127.0.0.1:8091:8091"
+    environment:
+      INSS_CONFIG_FILE: /run/secrets/service.env
+    volumes:
+      - ./data:/data
+      - ./secrets/service.env:/run/secrets/service.env:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/healthz', timeout=3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"

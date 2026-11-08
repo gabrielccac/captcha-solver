@@ -106,6 +106,44 @@ def test_fluxo_completo():
     assert a.cookies() == {"sessao": "abc"}
 
 
+def test_resume_uses_fresh_authorization_and_no_form_posts():
+    def route(url, method, data):
+        if urlsplit(url).path == "/authorize":
+            return Resp(302, headers={"Location": "https://meu.inss.gov.br/?code=fresh&state=" + s.state})
+        return Resp(200, "<html>portal</html>", url=url)
+    s = FakeSession(route)
+    a = GovBrAuth(s, StaticToken("unused"), client_id="autorizar.meu.inss.gov.br",
+                  redirect_uri="https://meu.inss.gov.br/")
+    a.resume()
+    state = a.state
+    assert a.authorization_code == "fresh"
+    a.resume()
+    assert a.state != state
+    assert all(call[0] == "GET" for call in s.calls)
+
+
+@pytest.mark.parametrize("html,code", [(ACCOUNT_HTML, "sso_login_required"),
+    (PASSWORD_HTML, "sso_login_required"), ("<html>consent</html>", "sso_interaction_required"),
+    (TWO_FACTOR_HTML, "two_factor_required")])
+def test_resume_stops_when_interaction_is_required(html, code):
+    def route(url, method, data):
+        if urlsplit(url).path == "/authorize":
+            return Resp(302, headers={"Location": "/login?authorization_id=fixture"})
+        return Resp(200, html, url=url)
+    s = FakeSession(route)
+    with pytest.raises(AuthError, match="^" + code + "$"):
+        make(s).resume()
+    assert all(call[0] == "GET" for call in s.calls)
+
+
+def test_resume_rejects_a_mismatched_callback_state():
+    s = FakeSession(lambda *a: Resp(302, headers={"Location":
+        "https://www.comprasnet.gov.br/seguro/landing_sso.asp?code=fresh&state=wrong"}))
+    with pytest.raises(AuthError, match="state_mismatch"):
+        make(s).resume()
+    assert len(s.calls) == 1
+
+
 def test_token_e_csrf_sao_enviados():
     s = FakeSession(routes)
     a = make(s, token="token-captcha")
@@ -175,6 +213,10 @@ def password_auth(response):
     (Resp(403, "erro secreto"), "http_forbidden"),
     (Resp(429), "rate_limited"),
     (Resp(500), "http_error"),
+    (Resp(400, INVALID_HTML), "invalid_credentials"),
+    (Resp(400, TWO_FACTOR_HTML), "two_factor_required"),
+    (Resp(400, "<p>Captcha inválido.</p>"), "captcha_invalid"),
+    (Resp(400, "<p>fixture-secret desconhecido</p>"), "http_error"),
     (Resp(200, PASSWORD_HTML), "password_not_accepted"),
     (Resp(200, "<h1>Erro</h1>"), "password_not_accepted"),
     (Resp(302), "password_not_accepted"),
@@ -183,8 +225,11 @@ def password_auth(response):
 ])
 def test_password_failure_never_succeeds(response, code):
     a, s = password_auth(response)
-    with pytest.raises(AuthError, match=code):
+    with pytest.raises(AuthError, match=code) as error:
         a.submit_password("fixture-password")
+    if response.status_code == 400:
+        assert error.value.http_status == 400
+        assert str(error.value) == code
     with pytest.raises(AuthError, match="login_not_completed"):
         a.finish()
     assert len(s.calls) == 1  # sem retry de senha/token

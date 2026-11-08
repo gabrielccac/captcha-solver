@@ -13,14 +13,20 @@ dependencies = [
     "mcp>=2,<3",
 ]
 
+[project.optional-dependencies]
+hosted = ["cryptography>=45,<47", "uvicorn>=0.35,<1", "starlette>=0.46,<1"]
+
 [project.scripts]
 inss-login-http = "inss.http_login:main"
-inss-extract = "inss.workflow:main"
+inss-query = "inss.query:main"
+inss-extract = "inss.query:main"
+inss-browser-legacy = "inss.workflow:main"
 comprasnet-login = "comprasnet.workflow:main"
 inss-mcp = "inss.mcp_server:main"
+inss-hosted = "inss.hosted:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.27,<1"]
