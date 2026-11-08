@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 from PIL import Image, ImageDraw
 
+from captcha.extractor import find_grid, tile_centers_page
 from captcha.interactions import DynamicInteractions, selection_marks
 from inss import session
 
@@ -44,6 +45,31 @@ def test_image_change_without_check_marker_is_not_selection():
     assert selection_marks(before,hover,GRID)==set()
 
 
+def test_teal_photos_do_not_move_grid_or_hide_selection_marks():
+    before = widget()
+    # The broad teal band belongs to two photos well below the real header.
+    draw = ImageDraw.Draw(before)
+    draw.rectangle((16, 190, 128, 239), fill=(0, 130, 155))
+    draw.rectangle((146, 190, 258, 239), fill=(0, 130, 155))
+    clean_grid = find_grid(widget())
+    grid = find_grid(before)
+    assert grid == clean_grid
+    clip = {'x': 0, 'y': 0, 'width': 400, 'height': 600}
+    centers = tile_centers_page({}, clip, grid)
+    assert 130 < centers[0][1] < 250
+    assert 390 < centers[-1][1] < 510
+    after = widget({1, 6, 7})
+    # Preserve the teal photo in the unselected second tile.
+    after.paste(before.crop((146, 190, 262, 240)), (146, 190))
+    assert selection_marks(before, after, grid) == {1, 6, 7}
+
+
+def test_header_band_tolerates_a_short_text_gap():
+    image = widget()
+    ImageDraw.Draw(image).rectangle((10, 45, 390, 46), fill='white')
+    assert find_grid(image) == find_grid(widget())
+
+
 def test_loading_tiles_are_not_ready_for_vision():
     controller=DynamicInteractions()
     before=widget()
@@ -77,6 +103,52 @@ def test_short_click_retains_movement_and_small_fixed_margins():
     page.mouse.click.assert_called_once_with(100,200)
     waits=[call.args[0] for call in page.wait_for_timeout.call_args_list]
     assert 80<=waits[0]<=120 and 100<=waits[1]<=160
+
+
+def test_two_matching_frames_near_deadline_confirm_stable_selection(monkeypatch):
+    from captcha import interactions
+    clock = [0.0]
+    monkeypatch.setattr(interactions.time, 'monotonic', lambda: clock[0])
+    missing, complete = io.BytesIO(), io.BytesIO()
+    widget({2}).save(missing, format='PNG')
+    widget({2, 5}).save(complete, format='PNG')
+    count = [0]
+    # Simulate a slowly rendering worker: first four frames still miss the last click.
+    def screenshot(**kwargs):
+        clock[0] += .4
+        count[0] += 1
+        return missing.getvalue() if count[0] <= 4 else complete.getvalue()
+    page = Mock()
+    page.screenshot.side_effect = screenshot
+    page.wait_for_timeout.side_effect = lambda ms: clock.__setitem__(0, clock[0] + ms / 1000)
+    controller = DynamicInteractions(timeout_ms=2500)
+    controller.prepare(widget(), GRID, [2, 5])
+    assert controller.wait_ready(page, {})
+    assert controller.metrics[-1]['frames'] == 6
+
+
+def test_matching_marks_with_changing_grid_are_not_ready(monkeypatch):
+    from captcha import interactions
+    clock = [0.0]
+    monkeypatch.setattr(interactions.time, 'monotonic', lambda: clock[0])
+    light, dark = io.BytesIO(), io.BytesIO()
+    widget({2, 5}).save(light, format='PNG')
+    image = widget({2, 5})
+    ImageDraw.Draw(image).rectangle((10, 250, 390, 500), fill='black')
+    image.save(dark, format='PNG')
+    payloads = [light.getvalue(), dark.getvalue()]
+    count = [0]
+    def screenshot(**kwargs):
+        clock[0] += .4
+        count[0] += 1
+        return payloads[count[0] % 2]
+    monkeypatch.setattr(interactions, 'selection_marks', lambda *args: {2, 5})
+    page = Mock()
+    page.screenshot.side_effect = screenshot
+    page.wait_for_timeout.side_effect = lambda ms: None
+    controller = DynamicInteractions(timeout_ms=1500)
+    controller.prepare(widget(), GRID, [2, 5])
+    assert not controller.wait_ready(page, {})
 
 
 def test_short_cpf_waits_for_value_and_button_without_changing_typing(monkeypatch):

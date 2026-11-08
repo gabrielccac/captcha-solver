@@ -213,6 +213,10 @@ def password_auth(response):
     (Resp(403, "erro secreto"), "http_forbidden"),
     (Resp(429), "rate_limited"),
     (Resp(500), "http_error"),
+    (Resp(400, INVALID_HTML), "invalid_credentials"),
+    (Resp(400, TWO_FACTOR_HTML), "two_factor_required"),
+    (Resp(400, "<p>Captcha inválido.</p>"), "captcha_invalid"),
+    (Resp(400, "<p>fixture-secret desconhecido</p>"), "http_error"),
     (Resp(200, PASSWORD_HTML), "password_not_accepted"),
     (Resp(200, "<h1>Erro</h1>"), "password_not_accepted"),
     (Resp(302), "password_not_accepted"),
@@ -221,8 +225,11 @@ def password_auth(response):
 ])
 def test_password_failure_never_succeeds(response, code):
     a, s = password_auth(response)
-    with pytest.raises(AuthError, match=code):
+    with pytest.raises(AuthError, match=code) as error:
         a.submit_password("fixture-password")
+    if response.status_code == 400:
+        assert error.value.http_status == 400
+        assert str(error.value) == code
     with pytest.raises(AuthError, match="login_not_completed"):
         a.finish()
     assert len(s.calls) == 1  # sem retry de senha/token

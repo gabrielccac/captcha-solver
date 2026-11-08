@@ -55,6 +55,16 @@ class DynamicInteractions:
         self.stable_ms=stable_ms
         self.metrics=[]
 
+    def begin_round(self, page):
+        return True
+
+    def click_tile(self, page, index, x, y):
+        self.click(page, x, y)
+        return True
+
+    def record_result(self):
+        pass
+
     @staticmethod
     def images_ready(crop, grid):
         # The calibrated 3x3 widget has instruction text above the grid.
@@ -84,29 +94,35 @@ class DynamicInteractions:
         started=time.monotonic()
         stable_since=None
         previous=None
+        previous_matched=False
+        observed=set()
         confirmed=False
         frames=0
         while (time.monotonic()-started)*1000<self.timeout_ms:
             current=Image.open(io.BytesIO(page.screenshot(clip=clip,timeout=2000))).convert('RGB')
             frames+=1
-            if selection_marks(self.before,current,self.grid)==self.selected:
+            observed=selection_marks(self.before,current,self.grid)
+            matched=observed==self.selected
+            if matched:
                 gx,gy,gw,gh=self.grid
                 area=(gx,gy,gx+gw,gy+gh)
                 delta=(sum(ImageStat.Stat(ImageChops.difference(previous.crop(area),current.crop(area))).mean)/3
                        if previous is not None and previous.size==current.size else float('inf'))
-                if delta<.5:
-                    if stable_since is None:
-                        stable_since=time.monotonic()
+                if previous_matched and delta<.5:
                     elapsed=(time.monotonic()-started)*1000
                     if elapsed>=180 and (time.monotonic()-stable_since)*1000>=self.stable_ms:
                         confirmed=True
                         break
                 else:
-                    stable_since=None
+                    # Start the interval on the first matching frame, not one frame later.
+                    stable_since=time.monotonic()
             else:
                 stable_since=None
             previous=current
+            previous_matched=matched
             page.wait_for_timeout(60)
         self.metrics.append({'pre_submit_wait_ms':round((time.monotonic()-started)*1000),
-            'confirmed':confirmed,'expected_selection_count':len(self.selected),'frames':frames})
+            'confirmed':confirmed,'expected_selection_count':len(self.selected),'frames':frames,
+            'expected_selection':sorted(self.selected),'observed_selection':sorted(observed),
+            'failure_phase':None if confirmed else 'marks' if observed!=self.selected else 'stability'})
         return confirmed

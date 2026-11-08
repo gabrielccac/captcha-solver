@@ -72,8 +72,8 @@ def find_grid(crop: Image.Image):
     W, H = rgb.size
     px = rgb.load()
     # teal header rows: high G+B, low R across a good share of the row.
-    # Scan the top 40% and take the LAST teal row: white text lines inside
-    # the header must not end the scan early.
+    # Use the first sustained band, with a small allowance for text gaps.
+    # A later band can belong to teal photos in the first row of tiles.
     def is_header_row(y):
         n = 0
         step = max(1, W // 60)
@@ -84,10 +84,19 @@ def find_grid(crop: Image.Image):
             if g > 100 and b > 100 and r < 120:
                 n += 1
         return n / max(1, total) > 0.35
-    last_teal = -1
+    band_start = last_teal = -1
+    min_band_height = max(6, W // 20)
     for y in range(0, int(H * 0.4)):
         if is_header_row(y):
+            if band_start < 0:
+                band_start = y
             last_teal = y
+        elif last_teal >= 0 and y - last_teal >= 3:
+            if last_teal - band_start + 1 >= min_band_height:
+                break
+            band_start = last_teal = -1
+    if last_teal - band_start + 1 < min_band_height:
+        last_teal = -1
     gy0 = last_teal + int(W * 0.015) if last_teal > 5 else int(H * 0.16)
     pad = int(W * 0.025)
     gx0, gw0 = pad, W - 2 * pad

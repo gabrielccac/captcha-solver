@@ -14,6 +14,7 @@ SSO_ORIGIN = "https://sso.acesso.gov.br"
 DEFAULT_SCOPE = "openid profile email phone govbr_confiabilidades"
 REDIRECTS = (301, 302, 303, 307, 308)
 INVALID_MSG = re.compile(r"Usu[aá]rio e/ou senha inv[aá]lidos|\bERL0003900\b", re.I)
+INVALID_CAPTCHA = re.compile(r"\bcaptcha\s+inv[aá]lido\b", re.I)
 TWO_FACTOR = re.compile(r'<input\b[^>]*\b(?:name|id)=["\']otpInput["\']', re.I)
 
 
@@ -24,15 +25,16 @@ def safe_url(url: str) -> str:
 
 
 class AuthError(RuntimeError):
-    def __init__(self, code: str, evidence: str = ""):
+    def __init__(self, code: str, evidence: str = "", *, http_status: int | None = None):
         # Não guardar HTML, URLs, corpos ou mensagens arbitrárias do servidor.
         super().__init__(code)
         self.code = code
+        self.http_status = http_status
 
 
 class TwoFactorRequired(AuthError):
-    def __init__(self, evidence: str = ""):
-        super().__init__("two_factor_required")
+    def __init__(self, evidence: str = "", *, http_status: int | None = None):
+        super().__init__("two_factor_required", http_status=http_status)
 
 
 @dataclass
@@ -100,12 +102,10 @@ class GovBrAuth:
 
     @staticmethod
     def _check_response(resp):
-        if resp.status_code == 403:
-            raise AuthError("http_forbidden")
-        if resp.status_code == 429:
-            raise AuthError("rate_limited")
-        if resp.status_code != 200 and resp.status_code not in REDIRECTS:
-            raise AuthError("http_error")
+        status = resp.status_code
+        if status != 200 and status not in REDIRECTS:
+            code = {403: "http_forbidden", 429: "rate_limited"}.get(status, "http_error")
+            raise AuthError(code, http_status=status)
 
     def _read_page(self, resp, fallback_url):
         self._check_response(resp)
@@ -212,6 +212,14 @@ class GovBrAuth:
         if cpf:
             overrides["accountId"] = cpf
         r = self._post_form(page, form, form.payload(**overrides))
+        if r.status_code == 400:
+            html = r.text or ""
+            if INVALID_MSG.search(html):
+                raise AuthError("invalid_credentials", http_status=400)
+            if TWO_FACTOR.search(html):
+                raise TwoFactorRequired(http_status=400)
+            if INVALID_CAPTCHA.search(html):
+                raise AuthError("captcha_invalid", http_status=400)
         self._read_page(r, page.url)
         loc = r.headers.get("Location", "")
         if r.status_code not in REDIRECTS or not loc:
