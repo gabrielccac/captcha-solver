@@ -25,12 +25,16 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def credentials():
+def credentials(claimed_sealed=None):
     values = {key: os.environ.pop(key, '') for key in KEYS}
     job_id = os.environ.pop('INSS_JOB_ID', '')
     url = os.environ.pop('INSS_CLAIM_URL', '')
     bearer = os.environ.pop('INSS_CLAIM_BEARER', '')
-    if job_id:
+    if claimed_sealed is not None:
+        if job_id:
+            raise ValueError('conflicting_credentials_sources')
+        values.update(claimed_sealed)
+    elif job_id:
         parts = urlsplit(url)
         if (not re.fullmatch(r'[a-f0-9]{32}', job_id) or not bearer
                 or parts.scheme != 'https' or not parts.hostname or parts.username
@@ -60,6 +64,16 @@ def encrypt(payload, certificate):
     return process.stdout
 
 
+def envelope(operation, value):
+    result = subprocess.run(
+        ['node', str(RUNNER_DIR / 'sealed.cjs'), operation], input=json.dumps(value).encode(),
+        capture_output=True, timeout=15,
+    )
+    if result.returncode or not result.stdout:
+        raise RuntimeError('sealed_transport_failed')
+    return result.stdout
+
+
 def summary(payload):
     validation = payload['validation']
     receipt = validation.get('receipt', {})
@@ -83,7 +97,10 @@ def summary(payload):
 def main():
     values = {}
     token = os.environ.pop('GHCR_TOKEN')
-    certificate = os.environ.pop('QUERY_RECIPIENT_CERT')
+    certificate = os.environ.pop('QUERY_RECIPIENT_CERT', '')
+    sealed = os.environ.pop('INSS_SEALED_CREDENTIALS', '')
+    private_key = os.environ.pop('INSS_SEALED_PRIVATE_KEY', '')
+    request_id = os.environ.pop('INSS_REQUEST_ID', '')
     previous_config = os.environ.get('DOCKER_CONFIG')
     name, process, timer = 'inss-private-query', None, None
     result = {'success': False, 'code': 'query_launch_failed', 'encrypted_result': False}
@@ -91,7 +108,16 @@ def main():
     output.mkdir(exist_ok=False)
     started = time.monotonic()
     try:
-        values = credentials()
+        result_key = None
+        if sealed:
+            claim = json.loads(envelope('open', {'sealed': sealed, 'private_key': private_key,
+                'request': request_id, 'attempt': os.environ.get('GITHUB_RUN_ATTEMPT')}))
+            result_key = claim.pop('result_key')
+            values = credentials(claim)
+            claim.clear()
+        else:
+            values = credentials()
+        del private_key
         with tempfile.TemporaryDirectory(prefix='private-query-') as temporary:
             root = Path(temporary)
             os.environ['DOCKER_CONFIG'] = str(root)
@@ -144,7 +170,12 @@ def main():
             ) if key in report}
             raw = json.dumps(payload).encode()
             # Only authenticated ciphertext can leave the runner as an artifact.
-            (output / 'result.cms').write_bytes(encrypt(raw, recipient))
+            if result_key:
+                (output / 'result.sealed').write_bytes(envelope('seal-result', {
+                    'key': result_key, 'request': request_id, 'payload': raw.decode(),
+                }))
+            else:
+                (output / 'result.cms').write_bytes(encrypt(raw, recipient))
             result = report
     except Exception as error:
         result['error_type'] = type(error).__name__
