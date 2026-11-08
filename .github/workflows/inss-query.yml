@@ -29,7 +29,6 @@ jobs:
           INSS_JOB_ID: ${{ inputs.job_id }}
           INSS_CLAIM_URL: ${{ vars.INSS_CLAIM_URL }}
           INSS_CLAIM_BEARER: ${{ secrets[vars.INSS_CLAIM_SECRET_NAME || 'INSS_CLAIM_BEARER'] }}
-          QUERY_WORKER_FILE: auth_worker.py
           GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
           GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
           OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}

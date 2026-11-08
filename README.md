@@ -215,11 +215,13 @@ O login, os detectores de seleção e as consultas compartilham o código em
 - **Chrome/CDP** usa o perfil do CLI e do serviço hospedado. O modo de interação
   rápida usa o detector visual, com as correções da grade e da espera por
   estabilidade.
-- **WebKit** usa a imagem fixada em `deploy/actions/query_run.py`. A consulta
-  privada e o piloto do Jean carregam o código do commit executado e verificam
+- **WebKit** usa a imagem fixada em `deploy/actions/query_run.py`. O workflow
+  de autenticação carrega o código do commit executado e verifica
   as seleções por `aria-pressed` dentro do iframe. Um retry por imagem é permitido
   apenas quando a seleção continua desmarcada no mesmo desafio.
 
-Os workflows do Actions entregam resultados criptografados. Uma recusa explícita
+O workflow do Actions entrega a credencial da API em um resultado criptografado.
+O consumidor decide os endpoints e regras de negócio. Veja o
+[contrato de autenticação](docs/actions-auth.md). Uma recusa explícita
 de credencial ou exigência de 2FA é registrada como `client_action_required`,
 com o código original. Um erro técnico faz o job falhar.
