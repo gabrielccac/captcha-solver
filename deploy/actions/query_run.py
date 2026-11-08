@@ -87,6 +87,8 @@ def summary(payload):
     for key in ('failure_stage', 'failure_http_status'):
         if key in receipt:
             result[key] = receipt[key]
+    if 'captcha_retry' in validation:
+        result['captcha_retry'] = validation['captcha_retry']
     if validation.get('code') == 'captcha_selection_not_confirmed' and receipt.get('selection_waits'):
         selection = receipt['selection_waits'][-1]
         result['captcha_selection'] = {key: selection[key] for key in

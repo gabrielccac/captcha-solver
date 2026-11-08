@@ -16,6 +16,7 @@ HEADER_NAMES = (
 
 
 def main():
+    login_input = json.loads(sys.stdin.readline())
     credentials = {}
 
     def capture(session, cpf):
@@ -23,7 +24,20 @@ def main():
         credentials.update(base_url=smoke.http_login.API.rstrip('/'), cpf=cpf, headers=headers,
             validity=token_validity(headers['Authorization'].removeprefix('Bearer '), headers['miToken']))
 
-    result = smoke.main(on_authenticated=capture)
+    try:
+        result = smoke.main(on_authenticated=capture, credentials=login_input)
+        receipt = result['receipt']
+        if (result['code'] == 'captcha_http_not_accepted'
+                and receipt.get('failure_stage') == 'http_consume_captcha'
+                and receipt.get('http_captcha_posts') == 1
+                and not receipt.get('http_password_posts')
+                and not receipt.get('browser_password_posts')):
+            first_elapsed_ms = result['elapsed_ms']
+            result = smoke.main(on_authenticated=capture, credentials=login_input)
+            result['captcha_retry'] = {'first_worker_ms': first_elapsed_ms, 'recovered': result['success']}
+            result['elapsed_ms'] += first_elapsed_ms
+    finally:
+        login_input.clear()
     return {'validation': result, 'client_data': {'api_credentials': credentials} if result['success'] else {}}
 
 
