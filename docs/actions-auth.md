@@ -4,6 +4,17 @@ O workflow `inss-query.yml` autentica no gov.br, confirma acesso ao Meu INSS
 e entrega a credencial da API ao consumidor. As regras de consulta, seleção
 de benefícios, cálculo e escrita pertencem ao fluxo do consumidor.
 
+O consumidor pode enviar `sealed` e um `request_id` aleatório de 32 dígitos
+hexadecimais. Configure `INSS_SEALED_PRIVATE_KEY` como segredo do ambiente e
+distribua somente a chave pública. O envelope `v1.wrapped.nonce.tag.body`
+usa campos Base64URL sem padding, chave AES-256-GCM envelopada com RSA-OAEP
+SHA-256, nonce de 12 bytes, tag de 16 bytes e AAD `inss-credentials:v1:<request_id>`.
+O corpo cifrado contém `request`, `expires` em segundos Unix, `cpf`, `password`
+e `result_key` aleatória de 32 bytes em Base64URL. Use validade curta e mantenha
+a chave de resultado no consumidor. Para esse modo o artefato traz
+`result.sealed` em `v1.nonce.tag.body`, cifrado com AES-256-GCM e AAD
+`inss-result:v1:<request_id>`. O JSON decifrado segue o mesmo contrato abaixo.
+
 Dispare o workflow em `main` com um `request_id` opaco. Para autenticar
 com dados de uma fila externa, informe também `job_id`, uma referência de uso
 único com 32 dígitos hexadecimais. Configure a variável de repositório
