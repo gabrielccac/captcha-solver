@@ -42,17 +42,17 @@ jobs:
           assert set(credentials)=={'GOVBR_CPF','GOVBR_PASSWORD'}
           os.environ.update(credentials)
           credentials.clear()
-          sources={'query_run.py': 'e586a812293a4e2794eaf2d4b8f8951ba504040bfcce4ddd6ad2b47d1da8ee0f', 'query_worker.py': '8458cb568d8ed2ac39cba4965fde26d08c1facd5ef71c79f35cb0a2103810cfc', 'jean_worker.py': 'ad94e2ff5288644e925f7156e5a7c8ce0b4f802e7bcae4019c72bca1547341f4'}
+          sources={'experiments/gha-webkit/query_run.py': '3e9cad02e7a5789b8ade7502bb67092108073df4be296417bcbe6188c2ccb3e0', 'experiments/gha-webkit/query_worker.py': '80dc544ecb0566f3d6127e948074f2198cc1a718bf907d6fa5937cacca5c5ea3', 'experiments/gha-webkit/jean_worker.py': 'ad94e2ff5288644e925f7156e5a7c8ce0b4f802e7bcae4019c72bca1547341f4', 'src/auth/govbr.py': 'ca7687ccc6d3b1fe66439ad1b70ccda289b2029e6dc162ca2e06ea706e46fc87', 'src/inss/http_login.py': '4b4af486c83105e5a0b48c864b835c19fc19f6124526ac191846f98c259b2689'}
           with tempfile.TemporaryDirectory(prefix='jean-query-') as temporary:
               root=pathlib.Path(temporary)
-              for name,expected in sources.items():
-                  url=f'https://api.github.com/repos/gabrielccac/captcha-solver/contents/experiments/gha-webkit/{name}?ref=26d758b2a0b2690d44913dc0b2f7d9d03d54e47a'
+              for path,expected in sources.items():
+                  url=f'https://api.github.com/repos/gabrielccac/captcha-solver/contents/{path}?ref=f80aac9eb8548b39f447a48d444df22a73bd49f7'
                   request=urllib.request.Request(url,headers={'Accept':'application/vnd.github.raw+json',
                       'Authorization':'Bearer '+os.environ['GHCR_TOKEN'],'X-GitHub-Api-Version':'2022-11-28'})
                   with opener.open(request,timeout=30) as response:
                       raw=response.read()
                   assert hashlib.sha256(raw).hexdigest()==expected
-                  (root/name).write_bytes(raw)
+                  (root/pathlib.PurePosixPath(path).name).write_bytes(raw)
               os.environ['QUERY_WORKER_FILE']='jean_worker.py'
               runpy.run_path(str(root/'query_run.py'),run_name='__main__')
           PY
