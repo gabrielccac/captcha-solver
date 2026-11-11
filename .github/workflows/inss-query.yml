@@ -1,14 +1,14 @@
-name: Meu INSS - autenticação privada
+﻿name: Meu INSS - autenticaÃ§Ã£o privada
 run-name: INSS n8n ${{ inputs.request_id }}
 on:
   workflow_dispatch:
     inputs:
       request_id:
-        description: Identificador opaco da autenticação
+        description: Identificador opaco da autenticaÃ§Ã£o
         required: true
         type: string
       job_id:
-        description: Referência de uso único para obter credenciais do relay configurado
+        description: ReferÃªncia de uso Ãºnico para obter credenciais do relay configurado
         type: string
       sealed:
         description: Envelope criptografado de credenciais, sem dados em claro
@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   query:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/n8n-callback-query'
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     environment: ${{ ((inputs.job_id || inputs.sealed) && vars.INSS_RELAY_ENVIRONMENT) || 'n8n-inss-query' }}
