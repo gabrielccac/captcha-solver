@@ -98,6 +98,18 @@ def test_sealed_query_runs_in_worker_and_posts_result_to_callback(monkeypatch, t
     assert 'webhook-waiting' not in json.dumps(receipt)
 
 
+def test_deliver_sends_a_named_agent_and_retries(monkeypatch):
+    opener = Mock()
+    opener.open.side_effect = [OSError('down'), Mock(__enter__=Mock(return_value=Mock(status=200)),
+                                                     __exit__=Mock(return_value=False))]
+    monkeypatch.setattr(runner, 'build_opener', Mock(return_value=opener))
+    monkeypatch.setattr(runner.time, 'sleep', Mock())
+    assert runner.deliver('https://n8n.example.test/webhook-waiting/1', {'a': 1}) is True
+    request = opener.open.call_args.args[0]
+    assert request.get_header('User-agent').startswith('captcha-solver-actions/')
+    assert opener.open.call_count == 2
+
+
 def test_relay_claim_replaces_static_credentials_without_fallback(monkeypatch):
     for key in runner.KEYS:
         monkeypatch.setenv(key, 'fictional-' + key)

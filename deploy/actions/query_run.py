@@ -62,7 +62,9 @@ def deliver(url, body, attempts=3):
     data = json.dumps(body).encode()
     for attempt in range(attempts):
         try:
-            request = Request(url, data=data, method='POST', headers={'Content-Type': 'application/json'})
+            # Cloudflare (in front of n8n) rejects the default Python-urllib agent with error 1010.
+            request = Request(url, data=data, method='POST', headers={
+                'Content-Type': 'application/json', 'User-Agent': 'captcha-solver-actions/1.0'})
             with build_opener(NoRedirect).open(request, timeout=30) as response:
                 if 200 <= response.status < 300:
                     return True
