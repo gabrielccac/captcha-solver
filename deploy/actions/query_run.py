@@ -16,6 +16,7 @@ IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62e6266bad61e67e
 SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
 KEYS = ('GOVBR_CPF', 'GOVBR_PASSWORD', 'OPENROUTER_API_KEY')
 CLIENT_ACTION_CODES = {'invalid_credentials', 'two_factor_required'}
+MAX_WORKER_OUTPUT = 40_000_000  # query results carry the PDFs as base64
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_DIR = Path(__file__).resolve().parent
 
@@ -54,6 +55,22 @@ def credentials(claimed_sealed=None):
     if not all(values.values()):
         raise ValueError('missing_credentials')
     return values
+
+
+def deliver(url, body, attempts=3):
+    """POST the receipt and the sealed result to the caller; the artifact stays as fallback."""
+    data = json.dumps(body).encode()
+    for attempt in range(attempts):
+        try:
+            request = Request(url, data=data, method='POST', headers={'Content-Type': 'application/json'})
+            with build_opener(NoRedirect).open(request, timeout=30) as response:
+                if 200 <= response.status < 300:
+                    return True
+        except Exception:
+            pass
+        if attempt + 1 < attempts:
+            time.sleep(2 ** attempt)
+    return False
 
 
 def encrypt(payload, certificate):
@@ -109,12 +126,15 @@ def main():
     output = Path('encrypted-query')
     output.mkdir(exist_ok=False)
     started = time.monotonic()
+    callback_url, options, sealed_result = '', None, None
     try:
         result_key = None
         if sealed:
             claim = json.loads(envelope('open', {'sealed': sealed, 'private_key': private_key,
                 'request': request_id, 'attempt': os.environ.get('GITHUB_RUN_ATTEMPT')}))
             result_key = claim.pop('result_key')
+            callback_url = claim.pop('callback_url', '')
+            options = claim.pop('options', None)
             values = credentials(claim)
             claim.clear()
         else:
@@ -146,18 +166,22 @@ def main():
             command += ['--entrypoint', 'python', IMAGE, '-u', '/auth_worker.py']
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.DEVNULL)
-            timer = threading.Timer(240, lambda: subprocess.run(['docker', 'rm', '-f', name],
+            limit = 330 if options is not None else 240
+            timer = threading.Timer(limit, lambda: subprocess.run(['docker', 'rm', '-f', name],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
             timer.start()
-            raw, _ = process.communicate((json.dumps(values) + '\n').encode(), timeout=260)
-            assert len(raw) <= 5_000_000
+            message = {'credentials': values, 'options': options} if options is not None else values
+            raw, _ = process.communicate((json.dumps(message) + '\n').encode(), timeout=limit + 20)
+            assert len(raw) <= MAX_WORKER_OUTPUT
             payload = json.loads(raw)
             validation, data = payload['validation'], payload['client_data']
             if process.returncode == 0 and validation.get('success'):
-                if validation.get('independent_api_http_status') != 200 or not data.get('api_credentials'):
+                expected = 'query' if options is not None else 'api_credentials'
+                if validation.get('independent_api_http_status') != 200 or not data.get(expected):
                     raise ValueError('unverified_credentials')
             else:
                 data.pop('api_credentials', None)
+                data.pop('query', None)
             report = summary(payload)
             report['worker_returncode'] = process.returncode
             if process.returncode == 0 and report['success']:
@@ -173,9 +197,10 @@ def main():
             raw = json.dumps(payload).encode()
             # Only authenticated ciphertext can leave the runner as an artifact.
             if result_key:
-                (output / 'result.sealed').write_bytes(envelope('seal-result', {
+                sealed_result = envelope('seal-result', {
                     'key': result_key, 'request': request_id, 'payload': raw.decode(),
-                }))
+                })
+                (output / 'result.sealed').write_bytes(sealed_result)
             else:
                 (output / 'result.cms').write_bytes(encrypt(raw, recipient))
             result = report
@@ -190,6 +215,13 @@ def main():
         else:
             os.environ['DOCKER_CONFIG'] = previous_config
         result['pipeline_ms'] = round((time.monotonic() - started) * 1000)
+        if callback_url:
+            # Failures are delivered too, so the caller stops waiting at once.
+            result['callback_delivered'] = deliver(callback_url, {
+                'request_id': request_id, 'run_id': os.environ.get('GITHUB_RUN_ID'),
+                'receipt': dict(result), 'sealed': sealed_result.decode() if sealed_result else None})
+            if result['callback_delivered']:
+                (output / 'result.sealed').unlink(missing_ok=True)
         rendered = json.dumps(result)
         assert not any(value and value in rendered for value in [token, *values.values()])
         (output / 'receipt.json').write_text(rendered)

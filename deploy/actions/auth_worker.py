@@ -1,4 +1,9 @@
-"""Validate a GOV.BR login and emit API credentials only to the encryption pipe."""
+"""Validate a GOV.BR login and emit the result only to the encryption pipe.
+
+Input line: either the bare credentials (legacy: export API credentials) or
+{"credentials": {...}, "options": {...}} to run the Meu INSS queries here and
+return their data and PDFs instead of tokens.
+"""
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
@@ -16,12 +21,20 @@ HEADER_NAMES = (
 
 
 def main():
-    login_input = json.loads(sys.stdin.readline())
-    credentials = {}
+    message = json.loads(sys.stdin.readline())
+    if 'credentials' in message:
+        login_input, options = message['credentials'], message.get('options')
+    else:
+        login_input, options = message, None
+    client_data = {}
 
     def capture(session, cpf):
+        if options is not None:
+            from inss import actions_query
+            client_data['query'] = actions_query.run(session, cpf, options)
+            return
         headers = {name: session.headers[name] for name in HEADER_NAMES}
-        credentials.update(base_url=smoke.http_login.API.rstrip('/'), cpf=cpf, headers=headers,
+        client_data['api_credentials'] = dict(base_url=smoke.http_login.API.rstrip('/'), cpf=cpf, headers=headers,
             validity=token_validity(headers['Authorization'].removeprefix('Bearer '), headers['miToken']))
 
     try:
@@ -38,7 +51,7 @@ def main():
             result['elapsed_ms'] += first_elapsed_ms
     finally:
         login_input.clear()
-    return {'validation': result, 'client_data': {'api_credentials': credentials} if result['success'] else {}}
+    return {'validation': result, 'client_data': client_data if result['success'] else {}}
 
 
 if __name__ == '__main__':
