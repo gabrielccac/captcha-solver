@@ -61,6 +61,55 @@ def test_query_finishes_only_when_expected_and_delivered(
     assert command[-1] == '/auth_worker.py'
 
 
+@pytest.mark.parametrize('delivered', [True, False])
+def test_sealed_query_runs_in_worker_and_posts_result_to_callback(monkeypatch, tmp_path, delivered):
+    monkeypatch.chdir(tmp_path)
+    for key in ('GHCR_TOKEN', 'GITHUB_ACTOR', 'OPENROUTER_API_KEY'):
+        monkeypatch.setenv(key, 'fictional-' + key)
+    monkeypatch.setenv('INSS_SEALED_CREDENTIALS', 'v1.sealed')
+    monkeypatch.setenv('INSS_REQUEST_ID', 'a' * 32)
+    monkeypatch.setenv('GITHUB_RUN_ID', '77')
+    options = {'years': 2, 'protocol': '', 'medical_reports': False}
+    claim = {'GOVBR_CPF': '00000000000', 'GOVBR_PASSWORD': 'fixture-password', 'result_key': 'k',
+             'callback_url': 'https://n8n.example.test/webhook-waiting/1', 'options': options}
+
+    def fake_envelope(operation, value):
+        return json.dumps(claim).encode() if operation == 'open' else b'v1.n.t.body'
+    monkeypatch.setattr(runner, 'envelope', fake_envelope)
+    worker = Mock(returncode=0)
+    worker.communicate.return_value = (json.dumps({
+        'validation': {'success': True, 'code': 'ok', 'independent_api_http_status': 200},
+        'client_data': {'query': {'complete': True, 'documents': []}}}).encode(), None)
+    monkeypatch.setattr(runner.subprocess, 'Popen', Mock(return_value=worker))
+    monkeypatch.setattr(runner.subprocess, 'run', Mock())
+    monkeypatch.setattr(runner.threading, 'Timer', Mock())
+    deliver = Mock(return_value=delivered)
+    monkeypatch.setattr(runner, 'deliver', deliver)
+
+    assert runner.main() == 0
+    sent = json.loads(worker.communicate.call_args.args[0])
+    assert sent['options'] == options and set(sent['credentials']) == set(runner.KEYS)
+    url, body = deliver.call_args.args
+    assert url == claim['callback_url'] and body['sealed'] == 'v1.n.t.body' and body['run_id'] == '77'
+    assert body['receipt']['success'] is True and 'fixture-password' not in json.dumps(body)
+    receipt = json.loads((tmp_path / 'encrypted-query' / 'receipt.json').read_text())
+    assert receipt['callback_delivered'] is delivered
+    assert (tmp_path / 'encrypted-query' / 'result.sealed').exists() is (not delivered)
+    assert 'webhook-waiting' not in json.dumps(receipt)
+
+
+def test_deliver_sends_a_named_agent_and_retries(monkeypatch):
+    opener = Mock()
+    opener.open.side_effect = [OSError('down'), Mock(__enter__=Mock(return_value=Mock(status=200)),
+                                                     __exit__=Mock(return_value=False))]
+    monkeypatch.setattr(runner, 'build_opener', Mock(return_value=opener))
+    monkeypatch.setattr(runner.time, 'sleep', Mock())
+    assert runner.deliver('https://n8n.example.test/webhook-waiting/1', {'a': 1}) is True
+    request = opener.open.call_args.args[0]
+    assert request.get_header('User-agent').startswith('captcha-solver-actions/')
+    assert opener.open.call_count == 2
+
+
 def test_relay_claim_replaces_static_credentials_without_fallback(monkeypatch):
     for key in runner.KEYS:
         monkeypatch.setenv(key, 'fictional-' + key)

@@ -29,7 +29,33 @@ function open({sealed, private_key, request, attempt}) {
     throw new Error('invalid_credentials_envelope');
   }
   bytes(value.result_key, 32);
-  return {GOVBR_CPF: value.cpf, GOVBR_PASSWORD: value.password, result_key: value.result_key};
+  const claim = {GOVBR_CPF: value.cpf, GOVBR_PASSWORD: value.password, result_key: value.result_key};
+  if (value.callback_url !== undefined) claim.callback_url = callbackUrl(value.callback_url);
+  if (value.options !== undefined) claim.options = queryOptions(value.options);
+  return claim;
+}
+
+// The result is POSTed here; it travels inside the envelope so it never shows in public run inputs.
+function callbackUrl(value) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error('invalid_callback_url'); }
+  if (typeof value !== 'string' || value.length > 2048 || url.protocol !== 'https:' || url.username || url.password) {
+    throw new Error('invalid_callback_url');
+  }
+  return url.href;
+}
+
+// Present options mean "log in and run the queries in the runner" instead of exporting API tokens.
+function queryOptions(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid_options');
+  const years = value.years === undefined ? 5 : value.years;
+  const protocol = value.protocol === undefined ? '' : value.protocol;
+  if (!Number.isInteger(years) || years < 1 || years > 5 || typeof protocol !== 'string' ||
+      (protocol && !/^[0-9]{8,16}$/.test(protocol)) ||
+      Object.keys(value).some(key => !['years', 'protocol', 'medical_reports'].includes(key))) {
+    throw new Error('invalid_options');
+  }
+  return {years, protocol, medical_reports: value.medical_reports === true};
 }
 
 function sealResult({key, request, payload}) {
