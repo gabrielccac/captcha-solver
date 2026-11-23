@@ -93,6 +93,18 @@ def test_retry_history_does_not_copy_arbitrary_solver_details():
     assert 'private' not in str(output['auth_retry'])
 
 
+def test_retry_history_preserves_sanitized_http_trace():
+    data = result('read_timeout')
+    data['receipt']['http_trace'] = [{'operation': 'govbr_sso', 'route': 'login',
+        'method': 'POST', 'elapsed_ms': 12, 'http_status': None,
+        'error': 'read_timeout', 'redirect_route': None, 'redirect_same_origin': None,
+        'content_type': 'missing', 'request_content_type': 'missing',
+        'request_body_bytes': 0, 'headers_bytes': 0, 'request_cookie_count': 0,
+        'set_cookie_present': False, 'response_body_bytes': None, 'server_family': 'unknown'}]
+    output = authenticate_with_retry(lambda: data)
+    assert output['auth_retry']['history'][0]['http_trace'] == data['receipt']['http_trace']
+
+
 def test_password_update_form_is_not_submitted_as_a_login():
     session = Mock(headers={})
     auth = GovBrAuth(session, NullCaptcha(), diagnostics={})
