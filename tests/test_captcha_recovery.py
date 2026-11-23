@@ -25,6 +25,19 @@ def test_recovers_on_third_attempt_without_replaying_a_password():
     assert output['auth_retry']['recovered']
 
 
+def test_upstream_rejection_keeps_the_existing_pre_password_retry_budget():
+    first = result('upstream_request_rejected')
+    first['receipt']['captcha_terminal'] = {
+        'kind': 'unknown', 'public_error_signals': {'request_rejected': True}}
+    run = Mock(side_effect=[first, result('read_timeout'), result('ok')])
+    output = authenticate_with_retry(run)
+    assert run.call_count == 3 and output['success']
+    assert [row['code'] for row in output['auth_retry']['history']] == [
+        'upstream_request_rejected', 'read_timeout', 'ok']
+    assert output['pre_password_retry']['first_code'] == 'upstream_request_rejected'
+    assert 'captcha_retry' not in output
+
+
 def test_engine_failure_gets_a_fresh_challenge_and_stops_at_three():
     run = Mock(side_effect=lambda: result('captcha_unsolved', 'captcha_engine'))
     output = authenticate_with_retry(run)
@@ -40,7 +53,8 @@ def test_time_budget_prevents_starting_another_slow_attempt():
 
 
 @pytest.mark.parametrize('code,posted', [('invalid_credentials', 0), ('two_factor_required', 0),
-    ('govbr_interaction_required', 0), ('read_timeout', 1), ('captcha_http_not_accepted', 1)])
+    ('govbr_interaction_required', 0), ('read_timeout', 1), ('captcha_http_not_accepted', 1),
+    ('upstream_request_rejected', 1)])
 def test_nonretryable_results_do_not_repeat_authentication(code, posted):
     run = Mock(side_effect=lambda: result(code, posted=posted))
     authenticate_with_retry(run)
@@ -64,6 +78,32 @@ def test_handoff_identifies_terminal_pages_without_submitting_password(html, cod
     assert error.value.code == code
     assert receipt['captcha_terminal']['kind'] == kind
     session.post.assert_not_called()
+
+
+@pytest.mark.parametrize('status,expected', [
+    (200, 'upstream_request_rejected'), (400, 'http_error'), (403, 'http_forbidden')])
+def test_handoff_request_rejection_keeps_non200_status_behavior(status, expected):
+    response = SimpleNamespace(status_code=status,
+        text='<title>Request Rejected</title><p>Your support ID: SUPPORT_PLACEHOLDER</p>',
+        url='https://sso.acesso.gov.br/login', headers={})
+    session, receipt = Mock(), {}
+    with pytest.raises(AuthError, match='^' + expected + '$') as error:
+        password_page(session, response, diagnostics=receipt)
+    assert error.value.http_status == status
+    if status == 200:
+        assert receipt['captcha_terminal']['public_error_signals']['request_rejected'] is True
+    session.get.assert_not_called()
+    session.post.assert_not_called()
+    assert 'SUPPORT_PLACEHOLDER' not in str(receipt)
+
+
+def test_handoff_redirect_without_location_keeps_existing_code():
+    response = SimpleNamespace(status_code=302, text='<title>Request Rejected</title>',
+        url='https://sso.acesso.gov.br/login', headers={})
+    session = Mock()
+    with pytest.raises(AuthError, match='^captcha_redirect_missing$'):
+        password_page(session, response)
+    session.get.assert_not_called()
 
 
 def test_password_terminal_captures_account_update_instead_of_blaming_password():

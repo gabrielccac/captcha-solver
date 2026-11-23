@@ -124,3 +124,8 @@ def classify_page(html, url, client_url, *, known_kind='unknown', status=200, ho
                 public_error_signals=public_error_signals, html_counts=parser.element_counts,
                 structure_fingerprint=fingerprint,
                 provider_error_codes=sorted(set(re.findall(r'\berl\d{7}\b', text)))[:8])
+
+
+def is_upstream_rejection_page(diagnostic):
+    return (diagnostic.get('kind') == 'unknown'
+            and diagnostic.get('public_error_signals', {}).get('request_rejected') is True)

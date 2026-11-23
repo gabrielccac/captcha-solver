@@ -3,7 +3,7 @@ import time
 
 MAX_ATTEMPTS = 3
 RETRY_BUDGET_MS = 200_000
-HANDOFF_ERRORS = {'captcha_http_not_accepted', 'read_timeout', 'connect_timeout',
+HANDOFF_ERRORS = {'captcha_http_not_accepted', 'upstream_request_rejected', 'read_timeout', 'connect_timeout',
                   'request_timeout', 'connection_error', 'incomplete_http_response'}
 ENGINE_ERRORS = {'captcha_unsolved', 'captcha_selection_not_confirmed', 'captcha_images_changed',
                  'captcha_token_not_captured'}

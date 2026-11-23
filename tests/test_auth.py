@@ -216,6 +216,12 @@ def password_auth(response):
     (Resp(400, INVALID_HTML), "invalid_credentials"),
     (Resp(400, TWO_FACTOR_HTML), "two_factor_required"),
     (Resp(400, "<p>Captcha inválido.</p>"), "captcha_invalid"),
+    (Resp(200, "<title>Request Rejected</title><p>Your support ID: SUPPORT_PLACEHOLDER</p>"),
+     "upstream_request_rejected"),
+    (Resp(400, "<title>Request Rejected</title><p>Your support ID: SUPPORT_PLACEHOLDER</p>"),
+     "http_error"),
+    (Resp(403, "<title>Request Rejected</title><p>Your support ID: SUPPORT_PLACEHOLDER</p>"),
+     "http_forbidden"),
     (Resp(400, "<p>fixture-secret desconhecido</p>"), "http_error"),
     (Resp(200, PASSWORD_HTML), "password_not_accepted"),
     (Resp(200, "<h1>Erro</h1>"), "password_not_accepted"),
@@ -227,12 +233,54 @@ def test_password_failure_never_succeeds(response, code):
     a, s = password_auth(response)
     with pytest.raises(AuthError, match=code) as error:
         a.submit_password("fixture-password")
-    if response.status_code == 400:
-        assert error.value.http_status == 400
+    if response.status_code in (400, 403):
+        assert error.value.http_status == response.status_code
         assert str(error.value) == code
     with pytest.raises(AuthError, match="login_not_completed"):
         a.finish()
     assert len(s.calls) == 1  # sem retry de senha/token
+
+
+def test_resume_marks_unknown_request_rejection_without_an_extra_request():
+    receipt = {}
+    def route(url, method, data):
+        return Resp(200, '<title>Request Rejected</title><p>Your support ID: SUPPORT_PLACEHOLDER</p>', url=url)
+    session = FakeSession(route)
+    auth = GovBrAuth(session, StaticToken('unused'), diagnostics=receipt)
+    with pytest.raises(AuthError, match='^upstream_request_rejected$'):
+        auth.resume()
+    assert len(session.calls) == 1 and session.calls[0][0] == 'GET'
+    assert receipt['oauth_terminal']['public_error_signals']['request_rejected'] is True
+    assert 'SUPPORT_PLACEHOLDER' not in repr(receipt)
+
+
+def test_finish_marks_unknown_request_rejection_without_an_extra_request():
+    receipt = {}
+    def route(url, method, data):
+        return Resp(200, '<title>Request Rejected</title><p>Your support ID: SUPPORT_PLACEHOLDER</p>', url=url)
+    session = FakeSession(route)
+    auth = GovBrAuth(session, StaticToken('unused'), diagnostics=receipt)
+    auth._next_location = 'https://sso.acesso.gov.br/intermediate'
+    with pytest.raises(AuthError, match='^upstream_request_rejected$'):
+        auth.finish()
+    assert session.calls == [('GET', 'https://sso.acesso.gov.br/intermediate')]
+    assert receipt['oauth_terminal']['public_error_signals']['request_rejected'] is True
+    assert 'SUPPORT_PLACEHOLDER' not in repr(receipt)
+
+
+def test_valid_oauth_callback_with_unknown_landing_body_keeps_existing_return():
+    receipt = {}
+    def route(url, method, data):
+        return Resp(200, '<title>Request Rejected</title><p>Your support ID: SUPPORT_PLACEHOLDER</p>', url=url)
+    session = FakeSession(route)
+    auth = GovBrAuth(session, StaticToken('unused'), diagnostics=receipt)
+    auth.state = 'state-fixture'
+    auth._next_location = auth.redirect_uri + '?code=code-fixture&state=state-fixture'
+    hops = auth.finish()
+    assert hops == [(auth.redirect_uri, 200)]
+    assert auth.authorization_code == 'code-fixture'
+    assert session.calls == [('GET', auth.redirect_uri + '?code=code-fixture&state=state-fixture')]
+    assert 'oauth_terminal' not in receipt
 
 
 def test_missing_token_does_not_post():

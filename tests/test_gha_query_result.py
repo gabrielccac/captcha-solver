@@ -19,6 +19,7 @@ spec.loader.exec_module(runner)
     ('two_factor_required', 3, False, 0, 'client_action_required'),
     ('govbr_interaction_required', 3, False, 0, 'client_action_required'),
     ('login_not_completed', 3, False, 3, 'technical_failure'),
+    ('upstream_request_rejected', 3, False, 3, 'technical_failure'),
     ('captcha_selection_not_confirmed', 3, False, 3, 'technical_failure'),
     ('invalid_credentials', 137, False, 3, 'technical_failure'),
     ('invalid_credentials', 3, True, 3, None),
