@@ -18,13 +18,18 @@ class Signals(HTMLParser):
         self.heading = []
         self.in_heading = False
         self.structure = []
+        self.element_counts = {'forms': 0, 'inputs': 0, 'buttons': 0, 'iframes': 0, 'scripts': 0}
 
     def handle_starttag(self, tag, attrs):
+        if tag == 'script':
+            self.element_counts['scripts'] += 1
         if tag in ('script', 'style'):
             self.hidden += 1
         if self.hidden:
             return
         attrs = dict(attrs)
+        if tag in ('form', 'input', 'button', 'iframe'):
+            self.element_counts[{'form': 'forms', 'input': 'inputs', 'button': 'buttons', 'iframe': 'iframes'}[tag]] += 1
         self.structure.append(tag + ':' + str(attrs.get('type', '')) if tag == 'input' else tag)
         self.in_heading |= tag in ('h1', 'h2')
         self.has_form |= tag == 'form'
@@ -55,6 +60,24 @@ def classify_page(html, url, client_url, *, known_kind='unknown', status=200, ho
                    if not unicodedata.combining(c))
     heading = ''.join(c for c in unicodedata.normalize('NFD', ' '.join(parser.heading)).lower()
                       if not unicodedata.combining(c))
+    public_error_signals = {
+        'request_rejected': bool(re.search(
+            r'\brequest rejected\b|\brequested url was rejected\b|\byour support id\b|'
+            r'\bsolicitacao rejeitada\b|\burl solicitada foi rejeitada\b|\bid de suporte\b', text)),
+        'access_denied_or_blocked': bool(re.search(
+            r'\baccess denied\b|\bforbidden\b|\brequest blocked\b|\bacesso negado\b|'
+            r'\brequisicao bloqueada\b|\bsolicitacao bloqueada\b|\bproibido\b', text)),
+        'service_or_gateway_unavailable': bool(re.search(
+            r'\bservice unavailable\b|\btemporarily unavailable\b|\bbad gateway\b|'
+            r'\bservico (?:temporariamente )?indisponivel\b|\bservico fora do ar\b|\berro de gateway\b', text)),
+        'cookies_required_or_disabled': bool(re.search(
+            r'\benable cookies\b|\bcookies? (?:are )?disabled\b|\bcookies? must be enabled\b|'
+            r'\bhabilite (?:os )?cookies\b|\bative (?:os )?cookies\b|'
+            r'\bcookies? (?:estao )?(?:desativad[oa]s?|desabilitad[oa]s?)\b', text)),
+        'session_or_request_invalid': bool(re.search(
+            r'\b(?:session|request) (?:has been )?(?:expired|invalid)\b|\binvalid (?:session|request)\b|'
+            r'\bsessao (?:expirada|encerrada|invalida)\b|\bsolicitacao invalida\b|\brequisicao invalida\b', text)),
+    }
     signals = []
     if parser.has_otp or re.search(r'verificacao em duas etapas|autenticacao em dois fatores', heading):
         kind = 'two_factor'
@@ -98,5 +121,6 @@ def classify_page(html, url, client_url, *, known_kind='unknown', status=200, ho
         route = 'govbr_other'
     fingerprint = hashlib.sha256('|'.join(parser.structure).encode()).hexdigest()[:16]
     return dict(kind=kind, route=route, http_status=status, hops=hops, signals=signals,
+                public_error_signals=public_error_signals, html_counts=parser.element_counts,
                 structure_fingerprint=fingerprint,
                 provider_error_codes=sorted(set(re.findall(r'\berl\d{7}\b', text)))[:8])
