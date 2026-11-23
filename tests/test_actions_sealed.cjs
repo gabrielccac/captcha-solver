@@ -26,11 +26,11 @@ test('binds request and result to the request ID and rejects expiry and reruns',
   assert.equal(open(input).callback_url, undefined);
 
   const withCallback = open({...input, sealed: envelope(now + 60, {
-    callback_url: 'https://n8n.example.test/webhook-waiting/42', options: {years: 2, protocol: '123456789'}})});
+    callback_url: 'https://n8n.example.test/webhook-waiting/42'})});
   assert.equal(withCallback.callback_url, 'https://n8n.example.test/webhook-waiting/42');
-  assert.deepEqual(withCallback.options, {years: 2, protocol: '123456789', medical_reports: false});
+  assert.equal(withCallback.options, undefined);
   for (const extra of [{callback_url: 'http://n8n.example.test/x'}, {callback_url: 'https://u:p@n8n.example.test/x'},
-                       {options: {years: 9}}, {options: {protocol: 'abc'}}, {options: {other: 1}}]) {
+                       {options: {years: 2}}, {options: {years: 9}}, {options: {protocol: 'abc'}}, {options: {other: 1}}]) {
     assert.throws(() => open({...input, sealed: envelope(now + 60, extra)}));
   }
 
