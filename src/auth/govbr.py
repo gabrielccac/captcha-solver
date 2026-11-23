@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 from .captcha import CaptchaProvider
 from .form import find_form
+from .page_diagnostics import classify_page
 
 AUTHZ = "https://sso.acesso.gov.br/authorize"
 SSO_ORIGIN = "https://sso.acesso.gov.br"
@@ -57,13 +58,14 @@ class GovBrAuth:
     def __init__(self, session, captcha: CaptchaProvider, *,
                  client_id="comprasnet.gov.br",
                  redirect_uri="https://www.comprasnet.gov.br/seguro/landing_sso.asp",
-                 scope=DEFAULT_SCOPE, timeout=30):
+                 scope=DEFAULT_SCOPE, timeout=30, diagnostics=None):
         self.s = session
         self.captcha = captcha
         self.client_id = client_id
         self.redirect_uri = redirect_uri
         self.scope = scope
         self.timeout = timeout
+        self.diagnostics = diagnostics
         self.authorization_id: str | None = None
         self.authorization_code: str | None = None
         self.page: LoginPage | None = None
@@ -260,6 +262,12 @@ class GovBrAuth:
                 if callback_code and parts.netloc == target.netloc and page.kind == "unknown":
                     self.authorization_code = callback_code
                     return hops
+                diagnostic = classify_page(page.html, page.url, self.redirect_uri,
+                    known_kind=page.kind, status=r.status_code, hops=len(hops))
+                if self.diagnostics is not None:
+                    self.diagnostics['oauth_terminal'] = diagnostic
+                if diagnostic['kind'] == 'two_factor':
+                    raise TwoFactorRequired(http_status=r.status_code)
                 raise AuthError("login_not_completed")
             next_loc = r.headers.get("Location", "")
             if not next_loc:

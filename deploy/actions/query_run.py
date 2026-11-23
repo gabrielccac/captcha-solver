@@ -111,6 +111,12 @@ def summary(payload):
         result['captcha_retry'] = validation['captcha_retry']
     if 'pre_password_retry' in validation:
         result['pre_password_retry'] = validation['pre_password_retry']
+    for key in ('oauth_terminal', 'oauth_resume_retry'):
+        if key in receipt:
+            result[key] = receipt[key]
+    for key in ('credential_status', 'next_action', 'retryable'):
+        if key in validation:
+            result[key] = validation[key]
     if validation.get('code') == 'captcha_selection_not_confirmed' and receipt.get('selection_waits'):
         selection = receipt['selection_waits'][-1]
         result['captcha_selection'] = {key: selection[key] for key in
@@ -193,10 +199,17 @@ def main():
                 report['result_class'] = 'client_action_required'
             else:
                 report['result_class'] = 'technical_failure'
+            if process.returncode not in (0, 3) or (process.returncode == 0) != bool(report['success']):
+                report.update(success=False, code='worker_incomplete', credential_status='undetermined',
+                              next_action='retry_later', retryable=True)
+                validation.update({key: report[key] for key in
+                    ('success', 'code', 'credential_status', 'next_action', 'retryable')})
             payload['validation']['result_class'] = report['result_class']
             payload['client_data']['login_diagnostics'] = {key: report[key] for key in (
                 'result_class', 'failure_stage', 'failure_http_status', 'captcha_selection',
                 'request_error_type', 'request_error_code', 'http_operation', 'http_method', 'last_http_status',
+                'oauth_terminal', 'oauth_resume_retry', 'pre_password_retry',
+                'credential_status', 'next_action', 'retryable',
             ) if key in report}
             raw = json.dumps(payload).encode()
             report['result_payload_bytes'] = len(raw)
