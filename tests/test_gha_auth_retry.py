@@ -19,6 +19,11 @@ import pytest
     ('invalid_credentials', {}, 'ok', 1),
     ('two_factor_required', {}, 'ok', 1),
     ('http_error', {}, 'ok', 1),
+    ('read_timeout', {}, 'ok', 2),
+    ('connect_timeout', {}, 'ok', 2),
+    ('connection_error', {}, 'read_timeout', 2),
+    ('read_timeout', {'http_password_posts': 1}, 'ok', 1),
+    ('read_timeout', {'failure_stage': 'http_oauth_redirect'}, 'ok', 1),
     ('ok', {}, 'ok', 1),
 ])
 def test_auth_worker_retries_only_one_rejected_handoff(monkeypatch, first_code, receipt_override,
@@ -53,5 +58,10 @@ def test_auth_worker_retries_only_one_rejected_handoff(monkeypatch, first_code, 
     assert result['code'] == final_code
     assert result['elapsed_ms'] == 100 * expected_calls
     assert bool(output['client_data']) is (final_code == 'ok')
-    assert result.get('captcha_retry') == (
-        {'first_worker_ms': 100, 'recovered': final_code == 'ok'} if expected_calls == 2 else None)
+    field = 'captcha_retry' if first_code == 'captcha_http_not_accepted' else 'pre_password_retry'
+    expected = {'first_worker_ms': 100, 'recovered': final_code == 'ok'}
+    if field == 'pre_password_retry':
+        expected['first_code'] = first_code
+    assert result.get(field) == (expected if expected_calls == 2 else None)
+    if final_code == 'ok':
+        assert set(output['client_data']) == {'api_credentials'}

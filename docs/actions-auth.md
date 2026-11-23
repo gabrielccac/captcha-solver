@@ -6,11 +6,16 @@ O recibo identifica a etapa e o tipo das falhas HTTP. Os códigos incluem
 `request_error_type` e `last_http_status` permitem localizar a falha sem
 expor URL, CPF, cabeçalhos ou conteúdo da resposta.
 
-Consultas devolvem resultados parciais com `query.complete=false` e `query.errors`
-quando um componente falha. Cada documento inclui tamanho e SHA-256. O recibo
-inclui tamanho e SHA-256 do JSON antes da criptografia. Saídas acima do limite
-de 40 MB geram `worker_output_too_large`. Falhas de extração de texto preservam
-o PDF disponível e aparecem em `parse_error` e `query.errors`.
+O recibo inclui tamanho e SHA-256 do JSON antes da criptografia. Saídas acima
+do limite de 1 MB geram `worker_output_too_large`. O resultado de autenticação
+contém `client_data.api_credentials` em sucesso. O cliente usa essa sessão
+para escolher os endpoints, baixar documentos e tratar resultados parciais.
+O campo `options` de consulta é recusado com `query_options_not_supported`.
+
+Se o POST de entrega do CAPTCHA tiver um timeout ou falha de conexão antes
+do envio da senha, o worker faz uma única nova tentativa de autenticação,
+com sessão e token novos. O recibo `pre_password_retry` identifica a primeira
+causa e informa se a recuperação funcionou.
 
 O workflow `inss-query.yml` autentica no gov.br, confirma acesso ao Meu INSS
 e entrega a credencial da API ao consumidor. As regras de consulta, seleção

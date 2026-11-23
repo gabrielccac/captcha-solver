@@ -1,4 +1,4 @@
-"""One Actions query with recipient-encrypted output; private stdout is never logged."""
+"""Authenticate once and return only encrypted API credentials or login diagnostics."""
 import base64
 import hashlib
 import json
@@ -16,7 +16,7 @@ IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62e6266bad61e67e
 SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
 KEYS = ('GOVBR_CPF', 'GOVBR_PASSWORD', 'OPENROUTER_API_KEY')
 CLIENT_ACTION_CODES = {'invalid_credentials', 'two_factor_required'}
-MAX_WORKER_OUTPUT = 40_000_000  # query results carry the PDFs as base64
+MAX_WORKER_OUTPUT = 1_000_000
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_DIR = Path(__file__).resolve().parent
 
@@ -109,6 +109,8 @@ def summary(payload):
             result[key] = receipt[key]
     if 'captcha_retry' in validation:
         result['captcha_retry'] = validation['captcha_retry']
+    if 'pre_password_retry' in validation:
+        result['pre_password_retry'] = validation['pre_password_retry']
     if validation.get('code') == 'captcha_selection_not_confirmed' and receipt.get('selection_waits'):
         selection = receipt['selection_waits'][-1]
         result['captcha_selection'] = {key: selection[key] for key in
@@ -129,7 +131,7 @@ def main():
     output = Path('encrypted-query')
     output.mkdir(exist_ok=False)
     started = time.monotonic()
-    callback_url, options, sealed_result = '', None, None
+    callback_url, sealed_result = '', None
     try:
         result_key = None
         if sealed:
@@ -137,7 +139,6 @@ def main():
                 'request': request_id, 'attempt': os.environ.get('GITHUB_RUN_ATTEMPT')}))
             result_key = claim.pop('result_key')
             callback_url = claim.pop('callback_url', '')
-            options = claim.pop('options', None)
             values = credentials(claim)
             claim.clear()
         else:
@@ -157,19 +158,11 @@ def main():
             (root / 'seccomp.json').write_bytes(seccomp)
             subprocess.run(['docker', 'pull', IMAGE], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            dependencies = root / 'python'
-            if options is not None:
-                subprocess.run(['python3', '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
-                                '--no-deps', '--target', str(dependencies), '-r', str(RUNNER_DIR / 'requirements.txt')],
-                               check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             command = ['docker', 'run', '--rm', '--init', '-i', '--name', name, '--log-driver', 'none',
                 '--read-only', '--cpus', '1', '--memory', '1400m', '--memory-swap', '1400m',
                 '--pids-limit', '320', '--shm-size', '128m', '--tmpfs', '/tmp:rw,nosuid,size=512m,mode=1777',
                 '--security-opt', 'seccomp=' + str(root / 'seccomp.json')]
             mounts = {SOURCE_ROOT / 'src': '/app/src'}
-            if options is not None:
-                mounts[dependencies] = '/app/pdf-deps'
-                command += ['--env', 'PYTHONPATH=/app/src:/app/pdf-deps']
             mounts[RUNNER_DIR / 'smoke.py'] = '/app/experiments/gha-webkit/smoke.py'
             mounts[RUNNER_DIR / 'auth_worker.py'] = '/auth_worker.py'
             for source, target in mounts.items():
@@ -177,24 +170,21 @@ def main():
             command += ['--entrypoint', 'python', IMAGE, '-u', '/auth_worker.py']
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=subprocess.DEVNULL)
-            limit = 330 if options is not None else 240
+            limit = 240
             timer = threading.Timer(limit, lambda: subprocess.run(['docker', 'rm', '-f', name],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
             timer.start()
-            message = {'credentials': values, 'options': options} if options is not None else values
-            raw, _ = process.communicate((json.dumps(message) + '\n').encode(), timeout=limit + 20)
+            raw, _ = process.communicate((json.dumps(values) + '\n').encode(), timeout=limit + 20)
             if len(raw) > MAX_WORKER_OUTPUT:
                 result.update(code='worker_output_too_large', worker_output_bytes=len(raw))
                 raise ValueError('worker_output_too_large')
             payload = json.loads(raw)
             validation, data = payload['validation'], payload['client_data']
             if process.returncode == 0 and validation.get('success'):
-                expected = 'query' if options is not None else 'api_credentials'
-                if validation.get('independent_api_http_status') != 200 or not data.get(expected):
+                if validation.get('independent_api_http_status') != 200 or not data.get('api_credentials'):
                     raise ValueError('unverified_credentials')
             else:
                 data.pop('api_credentials', None)
-                data.pop('query', None)
             report = summary(payload)
             report['worker_returncode'] = process.returncode
             if process.returncode == 0 and report['success']:
