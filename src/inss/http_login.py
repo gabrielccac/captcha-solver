@@ -20,6 +20,7 @@ from auth.handoff import CaptchaHandoff, HANDOFF_SELECTOR, SSO, password_page
 from captcha.browser import ManagedBrowser
 from captcha import hcaptcha
 from . import session as browser_login
+from .http_errors import observe, request_failure
 
 PORTAL = "https://meu.inss.gov.br/"
 API = "https://vip-pmeuinss-api.inss.gov.br/apis/"
@@ -42,6 +43,15 @@ def load_env_file(path):
     return values
 
 
+def response_json(response, receipt):
+    try:
+        return response.json()
+    except requests.exceptions.JSONDecodeError as error:
+        code = request_failure(error, receipt)
+        receipt['last_http_status'] = response.status_code
+        raise AuthError(code, http_status=response.status_code) from None
+
+
 def verify_api(session, code, cpf, receipt):
     headers = {"Accept": "application/json", "Origin": PORTAL.rstrip("/"),
                "Referer": PORTAL, "userId": uuid.uuid4().hex[:25],
@@ -52,7 +62,7 @@ def verify_api(session, code, cpf, receipt):
     receipt["code_exchange_http_status"] = response.status_code
     if response.status_code != 200:
         raise AuthError("code_exchange_failed", http_status=response.status_code)
-    data = response.json()
+    data = response_json(response, receipt)
     access = data.get("access_token") if isinstance(data, dict) else None
     if not isinstance(access, str) or not access:
         raise AuthError("access_token_missing")
@@ -67,7 +77,7 @@ def verify_api(session, code, cpf, receipt):
     receipt["userinfo_bootstrap_http_status"] = response.status_code
     if response.status_code != 200:
         raise AuthError("userinfo_bootstrap_failed", http_status=response.status_code)
-    data = response.json()
+    data = response_json(response, receipt)
     mi = data.get("miToken") if isinstance(data, dict) else None
     if not isinstance(mi, str) or not mi:
         raise AuthError("mi_token_missing")
@@ -119,9 +129,9 @@ def renew(session, cpf, *, receipt=None):
     except AuthError as error:
         receipt["code"] = error.code
         raise
-    except requests.RequestException:
-        receipt["code"] = "network_error"
-        raise AuthError("network_error") from None
+    except requests.RequestException as error:
+        receipt['code'] = request_failure(error, receipt)
+        raise AuthError(receipt['code']) from None
     except Exception:
         receipt["code"] = "renewal_runtime_error"
         raise AuthError("renewal_runtime_error") from None
@@ -160,6 +170,8 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         receipt["phase_events"].append({"phase": name,
             "elapsed_ms": round((time.monotonic() - started) * 1000)})
 
+    observer = observe(session, receipt)
+    observer.__enter__()
     try:
         if len(cpf) != 11 or not cpf.isascii() or not cpf.isdigit():
             raise AuthError("invalid_cpf_format")
@@ -290,13 +302,16 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         raise
     except browser_login.LoginError as error:
         raise AuthError(error.code) from None
-    except requests.RequestException:
-        raise AuthError("network_error") from None
+    except requests.RequestException as error:
+        raise AuthError(request_failure(error, receipt)) from None
     except PlaywrightError:
         raise AuthError("browser_error") from None
     except Exception:
         raise AuthError("login_runtime_error") from None
     finally:
+        observer.__exit__(None, None, None)
+        if not receipt.get('success') and receipt.get('phase_events'):
+            receipt['failure_stage'] = receipt['phase_events'][-1]['phase']
         if prefetched is not None:
             receipt['captcha_batch']=prefetched.statistics()
         receipt["elapsed_ms"] = round((time.monotonic() - started) * 1000)
@@ -328,8 +343,8 @@ def main():
         receipt["code"] = error.code
     except FileNotFoundError:
         receipt["code"] = "env_file_missing"
-    except requests.RequestException:
-        receipt["code"] = "network_error"
+    except requests.RequestException as error:
+        receipt['code'] = request_failure(error, receipt)
     except PlaywrightError:
         receipt["code"] = "browser_error"
     except KeyboardInterrupt:

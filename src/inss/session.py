@@ -291,8 +291,8 @@ def concession_letters(auth, mi, output_dir, *, benefit_numbers=None, session=No
                 parsing = time.monotonic()
                 try:
                     result["parsed"] = parse_concession_pdf(path)
-                except (OSError, subprocess.SubprocessError):
-                    result["parse_error"] = "PDF text extraction failed; check pdftotext installation"
+                except (OSError, subprocess.SubprocessError, RuntimeError):
+                    result["parse_error"] = "pdf_text_extraction_failed"
                 finally:
                     result["parse_ms"] = round((time.monotonic() - parsing) * 1000)
         except requests.RequestException:
