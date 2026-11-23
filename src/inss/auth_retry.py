@@ -35,6 +35,8 @@ def authenticate_with_retry(authenticate):
                     'captcha_terminal', 'password_terminal', 'oauth_terminal', 'oauth_resume_retry'):
             if key in receipt:
                 record[key] = receipt[key]
+        if receipt.get('http_trace'):
+            record['http_trace'] = receipt['http_trace'][-64:]
         if receipt.get('rounds'):
             timing_keys = ('round', 'modal_wait_s', 'capture_s', 'extract_s', 'solve_s', 'click_s', 'verdict_s')
             record['captcha_rounds'] = [{k: row[k] for k in timing_keys

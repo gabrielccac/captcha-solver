@@ -30,9 +30,14 @@ def test_query_finishes_only_when_expected_and_delivered(
         monkeypatch.setenv(key, 'fictional-' + key)
     authenticated = code == 'ok'
     bundle = {'headers': {'Authorization': 'Bearer fixture-access', 'miToken': 'fixture-mi'}}
+    trace = [{'operation': 'govbr_sso', 'route': 'login', 'method': 'POST', 'elapsed_ms': 12,
+        'http_status': None, 'error': 'read_timeout', 'redirect_route': None,
+        'redirect_same_origin': None, 'content_type': 'missing', 'request_content_type': 'missing',
+        'request_body_bytes': 0, 'headers_bytes': 0, 'request_cookie_count': 0,
+        'set_cookie_present': False, 'response_body_bytes': None, 'server_family': 'unknown'}]
     worker = Mock(returncode=worker_rc)
     worker.communicate.return_value = (json.dumps({
-        'validation': {'success': authenticated, 'code': code,
+        'validation': {'success': authenticated, 'code': code, 'receipt': {'http_trace': trace},
                        'independent_api_http_status': 200 if authenticated else None},
         'client_data': {'api_credentials': bundle} if authenticated else {},
     }).encode(), None)
@@ -48,6 +53,8 @@ def test_query_finishes_only_when_expected_and_delivered(
     consistent = worker_rc in (0, 3) and (worker_rc == 0) == authenticated
     assert receipt['success'] is (authenticated and consistent and not encrypt_fails)
     assert receipt.get('result_class') == result_class
+    if not encrypt_fails:
+        assert receipt['http_trace'] == trace
     assert 'fixture-access' not in json.dumps(receipt)
     assert 'fixture-mi' not in json.dumps(receipt)
     if not encrypt_fails:
@@ -57,6 +64,7 @@ def test_query_finishes_only_when_expected_and_delivered(
         assert payload['validation']['result_class'] == result_class
         assert payload['client_data'].get('api_credentials') == (bundle if result_class == 'authenticated' else None)
         assert payload['client_data']['login_diagnostics']['result_class'] == result_class
+        assert payload['client_data']['login_diagnostics']['http_trace'] == trace
     command = runner.subprocess.Popen.call_args.args[0]
     assert f'type=bind,src={ROOT.parents[1] / "src"},dst=/app/src,readonly' in command
     assert f'type=bind,src={ROOT / "smoke.py"},dst=/app/experiments/gha-webkit/smoke.py,readonly' in command

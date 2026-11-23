@@ -104,7 +104,7 @@ def summary(payload):
         'encrypted_result': True, 'raw_tokens_exported': False,
         'api_credentials_encrypted': 'api_credentials' in data}
     for key in ('failure_stage', 'failure_http_status', 'request_error_type', 'request_error_code',
-                'http_operation', 'http_method', 'last_http_status'):
+                'http_operation', 'http_method', 'last_http_status', 'http_trace'):
         if key in receipt:
             result[key] = receipt[key]
     if 'captcha_retry' in validation:
@@ -210,6 +210,7 @@ def main():
             payload['client_data']['login_diagnostics'] = {key: report[key] for key in (
                 'result_class', 'failure_stage', 'failure_http_status', 'captcha_selection',
                 'request_error_type', 'request_error_code', 'http_operation', 'http_method', 'last_http_status',
+                'http_trace',
                 'oauth_terminal', 'oauth_resume_retry', 'pre_password_retry',
                 'credential_status', 'next_action', 'retryable',
                 'auth_retry', 'captcha_terminal', 'password_terminal', 'captcha_retry',
