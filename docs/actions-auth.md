@@ -12,10 +12,16 @@ contém `client_data.api_credentials` em sucesso. O cliente usa essa sessão
 para escolher os endpoints, baixar documentos e tratar resultados parciais.
 O campo `options` de consulta é recusado com `query_options_not_supported`.
 
-Se o POST de entrega do CAPTCHA tiver um timeout ou falha de conexão antes
-do envio da senha, o worker faz uma única nova tentativa de autenticação,
-com sessão e token novos. O recibo `pre_password_retry` identifica a primeira
-causa e informa se a recuperação funcionou.
+Falhas transitórias na resolução ou entrega do CAPTCHA antes do envio da senha
+permitem até três tentativas no mesmo job, sempre com sessão e token novos.
+O worker só inicia outra tentativa se houver margem no orçamento de 200 segundos;
+o contêiner mantém o limite externo de 240 segundos. Senha enviada, credenciais
+recusadas, 2FA e etapas interativas não acionam novas tentativas de autenticação.
+`auth_retry` contém quantidade, histórico, resultado e motivo da parada. Os campos
+`captcha_retry` e `pre_password_retry` são mantidos para consumidores existentes.
+`captcha_terminal` e `password_terminal` identificam o tipo da página recebida,
+sem HTML, valores, imagens ou URLs. A assinatura estrutural e os códigos públicos
+ERL ajudam a agrupar páginas desconhecidas sem registrar seu conteúdo.
 
 Quando o redirecionamento OAuth termina em HTTP 200 sem o callback esperado,
 `oauth_terminal` registra somente sinais limitados da página: formulário de

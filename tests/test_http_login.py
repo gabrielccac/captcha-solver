@@ -275,7 +275,7 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
     failure = SimpleNamespace(status_code=503, url="https://sso.acesso.gov.br/login",
                               text="fixture-secret-response")
     if failure_stage != "http_consume_captcha":
-        monkeypatch.setattr(http_login, "password_page", lambda *a: Mock())
+        monkeypatch.setattr(http_login, "password_page", lambda *a, **kw: Mock())
     auth = Mock(authorization_code="fixture-code")
     auth.finish.return_value = [("https://meu.inss.gov.br/", 200)]
     if failure_stage == "http_oauth_redirect":

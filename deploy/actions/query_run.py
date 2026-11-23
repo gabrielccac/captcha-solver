@@ -15,7 +15,7 @@ from urllib.request import build_opener, HTTPRedirectHandler, Request
 IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62e6266bad61e67eaa62eb2ca6f69493b1801d9077e2e2b117693c61c28d5571'
 SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
 KEYS = ('GOVBR_CPF', 'GOVBR_PASSWORD', 'OPENROUTER_API_KEY')
-CLIENT_ACTION_CODES = {'invalid_credentials', 'two_factor_required'}
+CLIENT_ACTION_CODES = {'invalid_credentials', 'two_factor_required', 'govbr_interaction_required'}
 MAX_WORKER_OUTPUT = 1_000_000
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 RUNNER_DIR = Path(__file__).resolve().parent
@@ -111,9 +111,11 @@ def summary(payload):
         result['captcha_retry'] = validation['captcha_retry']
     if 'pre_password_retry' in validation:
         result['pre_password_retry'] = validation['pre_password_retry']
-    for key in ('oauth_terminal', 'oauth_resume_retry'):
+    for key in ('oauth_terminal', 'oauth_resume_retry', 'captcha_terminal', 'password_terminal'):
         if key in receipt:
             result[key] = receipt[key]
+    if 'auth_retry' in validation:
+        result['auth_retry'] = validation['auth_retry']
     for key in ('credential_status', 'next_action', 'retryable'):
         if key in validation:
             result[key] = validation[key]
@@ -210,6 +212,7 @@ def main():
                 'request_error_type', 'request_error_code', 'http_operation', 'http_method', 'last_http_status',
                 'oauth_terminal', 'oauth_resume_retry', 'pre_password_retry',
                 'credential_status', 'next_action', 'retryable',
+                'auth_retry', 'captcha_terminal', 'password_terminal', 'captcha_retry',
             ) if key in report}
             raw = json.dumps(payload).encode()
             report['result_payload_bytes'] = len(raw)
