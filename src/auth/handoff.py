@@ -3,7 +3,7 @@ import time
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 from .govbr import AuthError, GovBrAuth, LoginPage, REDIRECTS
-from .page_diagnostics import classify_page
+from .page_diagnostics import classify_page, is_upstream_rejection_page
 
 SSO = "sso.acesso.gov.br"
 HANDOFF_SELECTOR = "[data-auth-handoff]"
@@ -86,6 +86,10 @@ def password_page(session, response, *, diagnostics=None):
             if diagnostics is not None:
                 diagnostics['captcha_terminal'] = diagnostic
             raise AuthError('captcha_http_not_accepted')
+        if response.status_code == 200 and is_upstream_rejection_page(diagnostic):
+            if diagnostics is not None:
+                diagnostics['captcha_terminal'] = diagnostic
+            raise AuthError('upstream_request_rejected', http_status=response.status_code)
         if page.kind == "password":
             return page
         if response.status_code not in REDIRECTS:

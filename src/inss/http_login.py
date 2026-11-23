@@ -17,6 +17,7 @@ from auth.browser_captcha import adopt
 from auth.captcha import NullCaptcha
 from auth.govbr import AuthError, GovBrAuth
 from auth.handoff import CaptchaHandoff, HANDOFF_SELECTOR, SSO, password_page
+from auth.page_diagnostics import is_upstream_rejection_page
 from captcha.browser import ManagedBrowser
 from captcha import hcaptcha
 from . import session as browser_login
@@ -145,7 +146,9 @@ def finish_oauth(auth, receipt):
         return auth.finish()
     except AuthError as error:
         terminal = receipt.get('oauth_terminal', {})
-        if error.code != 'login_not_completed' or terminal.get('kind') not in {
+        can_resume = (error.code == 'login_not_completed' or
+                      error.code == 'upstream_request_rejected' and is_upstream_rejection_page(terminal))
+        if not can_resume or terminal.get('kind') not in {
                 'unknown', 'session_expired', 'service_error', 'script_navigation'}:
             raise
         retry = receipt['oauth_resume_retry'] = dict(first_code=error.code,

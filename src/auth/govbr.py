@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 from .captcha import CaptchaProvider
 from .form import find_form
-from .page_diagnostics import classify_page
+from .page_diagnostics import classify_page, is_upstream_rejection_page
 
 AUTHZ = "https://sso.acesso.gov.br/authorize"
 SSO_ORIGIN = "https://sso.acesso.gov.br"
@@ -151,6 +151,12 @@ class GovBrAuth:
         location = response.headers.get("Location", "")
         if response.status_code not in REDIRECTS:
             self._read_page(response, url)
+            diagnostic = classify_page(self.page.html, self.page.url, self.redirect_uri,
+                known_kind=self.page.kind, status=response.status_code)
+            if response.status_code == 200 and is_upstream_rejection_page(diagnostic):
+                if self.diagnostics is not None:
+                    self.diagnostics['oauth_terminal'] = diagnostic
+                raise AuthError('upstream_request_rejected', http_status=response.status_code)
             raise AuthError("sso_login_required" if self.page.kind in ("account", "password")
                             else "sso_interaction_required")
         if not location:
@@ -240,6 +246,8 @@ class GovBrAuth:
                 raise AuthError('govbr_interaction_required', http_status=r.status_code)
             if diagnostic['kind'] == 'captcha_error':
                 raise AuthError('captcha_invalid', http_status=r.status_code)
+            if r.status_code == 200 and is_upstream_rejection_page(diagnostic):
+                raise AuthError('upstream_request_rejected', http_status=r.status_code)
             raise AuthError("password_not_accepted")
         self._next_location = urljoin(self.page.url, loc)
         return self.page
@@ -279,6 +287,10 @@ class GovBrAuth:
                     return hops
                 diagnostic = classify_page(page.html, page.url, self.redirect_uri,
                     known_kind=page.kind, status=r.status_code, hops=len(hops))
+                if is_upstream_rejection_page(diagnostic):
+                    if self.diagnostics is not None:
+                        self.diagnostics['oauth_terminal'] = diagnostic
+                    raise AuthError('upstream_request_rejected', http_status=r.status_code)
                 if self.diagnostics is not None:
                     self.diagnostics['oauth_terminal'] = diagnostic
                 if diagnostic['kind'] == 'two_factor':

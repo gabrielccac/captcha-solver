@@ -79,12 +79,28 @@ def test_resume_failure_is_returned_after_only_one_probe():
         'first_page_kind': 'unknown', 'recovered': False, 'code': 'sso_interaction_required'}
 
 
+def test_upstream_rejection_uses_only_the_existing_oauth_resume_probe():
+    auth = Mock()
+    auth.finish.side_effect = AuthError('upstream_request_rejected')
+    auth.resume.side_effect = AuthError('upstream_request_rejected')
+    receipt = {'oauth_terminal': {'kind': 'unknown',
+        'public_error_signals': {'request_rejected': True}}}
+    with pytest.raises(AuthError, match='^upstream_request_rejected$'):
+        finish_oauth(auth, receipt)
+    auth.finish.assert_called_once()
+    auth.resume.assert_called_once()
+    auth.submit_password.assert_not_called()
+    assert receipt['oauth_resume_retry'] == {'first_code': 'upstream_request_rejected',
+        'first_page_kind': 'unknown', 'recovered': False, 'code': 'upstream_request_rejected'}
+
+
 @pytest.mark.parametrize('code,status,action,retryable', [
     ('ok', 'valid', 'use_credentials', False),
     ('invalid_credentials', 'invalid', 'check_credentials', False),
     ('two_factor_required', 'requires_two_factor', 'complete_two_factor', False),
     ('read_timeout', 'undetermined', 'retry_later', True),
     ('captcha_http_not_accepted', 'undetermined', 'retry_later', True),
+    ('upstream_request_rejected', 'undetermined', 'review_login_flow', False),
     ('login_not_completed', 'undetermined', 'review_login_flow', False),
     ('tls_error', 'undetermined', 'review_login_flow', False),
 ])
