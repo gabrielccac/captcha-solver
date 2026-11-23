@@ -11,7 +11,7 @@ from inss.mcp_server import get_inss_payments
 
 class MCPTests(unittest.TestCase):
     def test_known_login_failures_return_structured_evidence_without_payments(self):
-        for code in ("invalid_credentials", "two_factor_required"):
+        for code in ("invalid_credentials", "two_factor_required", "upstream_request_rejected"):
             failure = {"code": code, "success": False}
             with self.subTest(code=code), patch("inss.mcp_server.subprocess.run",
                     return_value=SimpleNamespace(returncode=3, stdout=json.dumps(failure))):

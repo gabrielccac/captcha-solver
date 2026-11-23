@@ -80,7 +80,7 @@ def get_inss_payments(cpf: str, password: str = "", medical_report_nb: str = "",
                             "captcha_unsolved", "network_error", "captcha_selection_not_confirmed",
                             "read_timeout", "connect_timeout", "request_timeout", "tls_error", "connection_error",
                             "invalid_json_response", "request_configuration_error", "response_decoding_error",
-                            "incomplete_http_response", "http_request_error",
+                            "incomplete_http_response", "http_request_error", "upstream_request_rejected",
                             "password_missing_in_env", "solver_key_missing", "invalid_query",
                             "local_credentials_identity_mismatch"):
                     return {
