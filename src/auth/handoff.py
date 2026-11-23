@@ -3,6 +3,7 @@ import time
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 from .govbr import AuthError, GovBrAuth, LoginPage, REDIRECTS
+from .page_diagnostics import classify_page
 
 SSO = "sso.acesso.gov.br"
 HANDOFF_SELECTOR = "[data-auth-handoff]"
@@ -59,17 +60,37 @@ class CaptchaHandoff:
             self.headers.clear()
 
 
-def password_page(session, response):
-    for _ in range(5):
+def password_page(session, response, *, diagnostics=None):
+    for hop in range(5):
         if not trusted_sso(response.url):
             raise AuthError("untrusted_url")
+        if response.status_code == 400:
+            diagnostic = classify_page(response.text, response.url, '', status=400, hops=hop)
+            if diagnostics is not None:
+                diagnostics['captcha_terminal'] = diagnostic
+            if diagnostic['kind'] == 'captcha_error':
+                raise AuthError('captcha_http_not_accepted', http_status=400)
         GovBrAuth._check_response(response)
         page = LoginPage(response.url, response.text)
-        if page.kind == "two_factor":
+        diagnostic = classify_page(page.html, page.url, '', known_kind=page.kind,
+                                   status=response.status_code, hops=hop)
+        if page.kind == "two_factor" or diagnostic['kind'] == 'two_factor':
+            if diagnostics is not None:
+                diagnostics['captcha_terminal'] = diagnostic
             raise AuthError("two_factor_required")
+        if diagnostic['kind'] in ('consent', 'account_update'):
+            if diagnostics is not None:
+                diagnostics['captcha_terminal'] = diagnostic
+            raise AuthError('govbr_interaction_required')
+        if diagnostic['kind'] == 'captcha_error':
+            if diagnostics is not None:
+                diagnostics['captcha_terminal'] = diagnostic
+            raise AuthError('captcha_http_not_accepted')
         if page.kind == "password":
             return page
         if response.status_code not in REDIRECTS:
+            if diagnostics is not None:
+                diagnostics['captcha_terminal'] = diagnostic
             raise AuthError("captcha_http_not_accepted")
         location = response.headers.get("Location")
         if not location:

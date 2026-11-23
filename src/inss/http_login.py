@@ -298,7 +298,7 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
             receipt["http_captcha_posts"] = 1
             response = captured.consume(session)
             receipt["captcha_http_status"] = response.status_code
-            page = password_page(session, response)
+            page = password_page(session, response, diagnostics=receipt)
             receipt["captcha_http_accepted_password_form"] = True
             scope = parse_qs(urlsplit(browser_login.AUTHZ).query)['scope'][0]
             auth = GovBrAuth(session, NullCaptcha(), client_id=CLIENT, redirect_uri=PORTAL,

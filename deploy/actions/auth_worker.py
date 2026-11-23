@@ -8,6 +8,7 @@ sys.path.insert(0, '/app/experiments/gha-webkit')
 import smoke
 from inss.session import token_validity
 from inss.login_outcome import login_outcome
+from inss.auth_retry import authenticate_with_retry
 
 
 HEADER_NAMES = (
@@ -25,23 +26,12 @@ def main():
         client_data['api_credentials'] = dict(base_url=smoke.http_login.API.rstrip('/'), cpf=cpf, headers=headers,
             validity=token_validity(headers['Authorization'].removeprefix('Bearer '), headers['miToken']))
 
+    def authenticate():
+        client_data.clear()
+        return smoke.main(on_authenticated=capture, credentials=login_input)
+
     try:
-        result = smoke.main(on_authenticated=capture, credentials=login_input)
-        receipt = result['receipt']
-        if (result['code'] in {'captcha_http_not_accepted', 'read_timeout', 'connect_timeout',
-                              'request_timeout', 'connection_error', 'incomplete_http_response'}
-                and receipt.get('failure_stage') == 'http_consume_captcha'
-                and receipt.get('http_captcha_posts') == 1
-                and not receipt.get('http_password_posts')
-                and not receipt.get('browser_password_posts')):
-            first_elapsed_ms = result['elapsed_ms']
-            first_code = result['code']
-            result = smoke.main(on_authenticated=capture, credentials=login_input)
-            field = 'captcha_retry' if first_code == 'captcha_http_not_accepted' else 'pre_password_retry'
-            result[field] = {'first_worker_ms': first_elapsed_ms, 'recovered': result['success']}
-            if field == 'pre_password_retry':
-                result[field]['first_code'] = first_code
-            result['elapsed_ms'] += first_elapsed_ms
+        result = authenticate_with_retry(authenticate)
     finally:
         login_input.clear()
     result.update(login_outcome(result['code'], result['receipt']))

@@ -200,6 +200,11 @@ class GovBrAuth:
             raise AuthError("invalid_credentials")
         if page.kind == "two_factor":
             raise TwoFactorRequired()
+        before_submit = classify_page(page.html, page.url, self.redirect_uri, known_kind=page.kind)
+        if before_submit['kind'] in ('consent', 'account_update'):
+            if self.diagnostics is not None:
+                self.diagnostics['password_terminal'] = before_submit
+            raise AuthError('govbr_interaction_required')
         form = find_form(page.html, has_field="password")
         if form is None:
             raise AuthError("password_form_missing")
@@ -225,6 +230,16 @@ class GovBrAuth:
         self._read_page(r, page.url)
         loc = r.headers.get("Location", "")
         if r.status_code not in REDIRECTS or not loc:
+            diagnostic = classify_page(self.page.html, self.page.url, self.redirect_uri,
+                known_kind=self.page.kind, status=r.status_code)
+            if self.diagnostics is not None:
+                self.diagnostics['password_terminal'] = diagnostic
+            if diagnostic['kind'] == 'two_factor':
+                raise TwoFactorRequired(http_status=r.status_code)
+            if diagnostic['kind'] in ('consent', 'account_update'):
+                raise AuthError('govbr_interaction_required', http_status=r.status_code)
+            if diagnostic['kind'] == 'captcha_error':
+                raise AuthError('captcha_invalid', http_status=r.status_code)
             raise AuthError("password_not_accepted")
         self._next_location = urljoin(self.page.url, loc)
         return self.page
