@@ -5,6 +5,7 @@ and POST it straight to the caller (n8n) instead of exporting API tokens through
 Every component fails independently; ``errors`` lists what is missing and ``complete`` is False then.
 """
 import base64
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import json
 import re
@@ -42,6 +43,7 @@ def _pdf(response):
 
 def _document(kind, filename, content, **extra):
     return {"kind": kind, "filename": filename, "bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
             "base64": base64.b64encode(content).decode(), **extra}
 
 
@@ -130,12 +132,14 @@ def run(session, cpf, options):
             letter_results = []
             out["errors"].append({"component": "concession_letters", "code": "benefit_outside_session"})
         for letter in letter_results:
-            letter.pop("parse_error", None)
             out["concession_letters"].append(letter)
             if letter.get("file"):
                 path = folder / letter["file"]
                 out["documents"].append(_document("carta", letter["file"], path.read_bytes(),
                                                   benefit_number=letter["benefit_number"]))
+                if letter.get('parse_error') or not letter.get('parsed'):
+                    out['errors'].append({'component': 'concession_letter_text',
+                                          'benefit_number': letter['benefit_number'], 'code': 'text_extraction_failed'})
             else:
                 out["errors"].append({"component": "concession_letters", "benefit_number": letter["benefit_number"],
                                       "code": "documento_indisponivel"})

@@ -103,7 +103,8 @@ def summary(payload):
         'inss_http_status': validation.get('independent_api_http_status'),
         'encrypted_result': True, 'raw_tokens_exported': False,
         'api_credentials_encrypted': 'api_credentials' in data}
-    for key in ('failure_stage', 'failure_http_status'):
+    for key in ('failure_stage', 'failure_http_status', 'request_error_type', 'request_error_code',
+                'http_operation', 'http_method', 'last_http_status'):
         if key in receipt:
             result[key] = receipt[key]
     if 'captcha_retry' in validation:
@@ -156,11 +157,19 @@ def main():
             (root / 'seccomp.json').write_bytes(seccomp)
             subprocess.run(['docker', 'pull', IMAGE], check=True,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            dependencies = root / 'python'
+            if options is not None:
+                subprocess.run(['python3', '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
+                                '--no-deps', '--target', str(dependencies), '-r', str(RUNNER_DIR / 'requirements.txt')],
+                               check=True, timeout=60, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             command = ['docker', 'run', '--rm', '--init', '-i', '--name', name, '--log-driver', 'none',
                 '--read-only', '--cpus', '1', '--memory', '1400m', '--memory-swap', '1400m',
                 '--pids-limit', '320', '--shm-size', '128m', '--tmpfs', '/tmp:rw,nosuid,size=512m,mode=1777',
                 '--security-opt', 'seccomp=' + str(root / 'seccomp.json')]
             mounts = {SOURCE_ROOT / 'src': '/app/src'}
+            if options is not None:
+                mounts[dependencies] = '/app/pdf-deps'
+                command += ['--env', 'PYTHONPATH=/app/src:/app/pdf-deps']
             mounts[RUNNER_DIR / 'smoke.py'] = '/app/experiments/gha-webkit/smoke.py'
             mounts[RUNNER_DIR / 'auth_worker.py'] = '/auth_worker.py'
             for source, target in mounts.items():
@@ -174,7 +183,9 @@ def main():
             timer.start()
             message = {'credentials': values, 'options': options} if options is not None else values
             raw, _ = process.communicate((json.dumps(message) + '\n').encode(), timeout=limit + 20)
-            assert len(raw) <= MAX_WORKER_OUTPUT
+            if len(raw) > MAX_WORKER_OUTPUT:
+                result.update(code='worker_output_too_large', worker_output_bytes=len(raw))
+                raise ValueError('worker_output_too_large')
             payload = json.loads(raw)
             validation, data = payload['validation'], payload['client_data']
             if process.returncode == 0 and validation.get('success'):
@@ -195,8 +206,11 @@ def main():
             payload['validation']['result_class'] = report['result_class']
             payload['client_data']['login_diagnostics'] = {key: report[key] for key in (
                 'result_class', 'failure_stage', 'failure_http_status', 'captcha_selection',
+                'request_error_type', 'request_error_code', 'http_operation', 'http_method', 'last_http_status',
             ) if key in report}
             raw = json.dumps(payload).encode()
+            report['result_payload_bytes'] = len(raw)
+            report['result_sha256'] = hashlib.sha256(raw).hexdigest()
             # Only authenticated ciphertext can leave the runner as an artifact.
             if result_key:
                 sealed_result = envelope('seal-result', {

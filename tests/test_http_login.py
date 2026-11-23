@@ -174,7 +174,8 @@ def test_http_renewal_preserves_old_state_on_failure_and_never_starts_browser(mo
         assert original.cookies.get("fixture_sso") == "private-rotated-cookie"
         assert receipt["success"] and receipt["access_token_changed"]
     else:
-        code = "renewal_runtime_error" if failure == "runtime_error" else failure
+        code = ("renewal_runtime_error" if failure == "runtime_error" else
+                "request_timeout" if failure == "network_error" else failure)
         with pytest.raises(AuthError, match="^" + code + "$"):
             http_login.renew(original, "00000000000", receipt=receipt)
         assert dict(original.headers) == before_headers
@@ -319,7 +320,7 @@ def test_integrated_login_closes_browser_before_http_password(monkeypatch, defer
 
 
 @pytest.mark.parametrize("error,code", [(AuthError("two_factor_required"), "two_factor_required"),
-    (requests.Timeout("fixture-secret"), "network_error"),
+    (requests.Timeout("fixture-secret"), "request_timeout"),
     (RuntimeError("fixture-secret"), "login_runtime_error")])
 def test_cli_errors_never_log_secrets(monkeypatch, tmp_path, capsys, error, code):
     import sys

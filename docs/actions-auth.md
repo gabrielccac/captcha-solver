@@ -1,5 +1,17 @@
 # Autenticação do Meu INSS via GitHub Actions
 
+O recibo identifica a etapa e o tipo das falhas HTTP. Os códigos incluem
+`read_timeout`, `connect_timeout`, `tls_error`, `connection_error` e
+`invalid_json_response`. Os campos `http_operation`, `http_method`,
+`request_error_type` e `last_http_status` permitem localizar a falha sem
+expor URL, CPF, cabeçalhos ou conteúdo da resposta.
+
+Consultas devolvem resultados parciais com `query.complete=false` e `query.errors`
+quando um componente falha. Cada documento inclui tamanho e SHA-256. O recibo
+inclui tamanho e SHA-256 do JSON antes da criptografia. Saídas acima do limite
+de 40 MB geram `worker_output_too_large`. Falhas de extração de texto preservam
+o PDF disponível e aparecem em `parse_error` e `query.errors`.
+
 O workflow `inss-query.yml` autentica no gov.br, confirma acesso ao Meu INSS
 e entrega a credencial da API ao consumidor. As regras de consulta, seleção
 de benefícios, cálculo e escrita pertencem ao fluxo do consumidor.

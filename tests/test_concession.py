@@ -50,6 +50,20 @@ class ConcessionTests(unittest.TestCase):
         self.assertIsNone(result["request_date"])
         self.assertEqual(result["parse_status"], "partial")
 
+    def test_older_letter_distinguishes_effective_date_and_monthly_income(self):
+        letter = ('NUMERO DO BENEFICIO: 123.456.789-0\n'
+                  'DATA DE CONCESSAO DO BENEFICIO: 14/10/2026\n'
+                  'FOI CONCEDIDO SALARIO MATERNIDADE (80) NUMERO 123.456.789-0 '
+                  'REQUERIDO EM 13/03/2025 COM RENDA MENSAL DE R$ 1.518,00, '
+                  'COM INICIO DE VIGENCIA A PARTIR DE 13/03/2025.')
+        result = parse_concession_text(letter)
+        self.assertEqual(result['benefit_number'], '1234567890')
+        self.assertEqual(result['monthly_amount'], '1518.00')
+        self.assertEqual(result['effective_start_date'], '2025-03-13')
+        self.assertEqual(result['grant_date'], '2026-10-14')
+        self.assertIsNone(result['initial_monthly_amount'])
+        self.assertIsNone(result['payment_start_date'])
+
 
 if __name__ == "__main__":
     unittest.main()
