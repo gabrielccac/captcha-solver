@@ -7,6 +7,7 @@ import sys
 sys.path.insert(0, '/app/experiments/gha-webkit')
 import smoke
 from inss.session import token_validity
+from inss.login_outcome import login_outcome
 
 
 HEADER_NAMES = (
@@ -43,6 +44,7 @@ def main():
             result['elapsed_ms'] += first_elapsed_ms
     finally:
         login_input.clear()
+    result.update(login_outcome(result['code'], result['receipt']))
     return {'validation': result, 'client_data': client_data if result['success'] else {}}
 
 

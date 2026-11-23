@@ -139,6 +139,29 @@ def renew(session, cpf, *, receipt=None):
         receipt["elapsed_ms"] = round((time.monotonic() - started) * 1000)
 
 
+def finish_oauth(auth, receipt):
+    """Probe existing SSO once, without another browser, CAPTCHA or password POST."""
+    try:
+        return auth.finish()
+    except AuthError as error:
+        terminal = receipt.get('oauth_terminal', {})
+        if error.code != 'login_not_completed' or terminal.get('kind') not in {
+                'unknown', 'session_expired', 'service_error', 'script_navigation'}:
+            raise
+        retry = receipt['oauth_resume_retry'] = dict(first_code=error.code,
+            first_page_kind=terminal['kind'], recovered=False)
+        try:
+            hops = auth.resume()
+        except AuthError as second:
+            retry['code'] = second.code
+            raise
+        except requests.RequestException as second:
+            retry['code'] = request_failure(second, receipt)
+            raise
+        retry['recovered'] = True
+        return hops
+
+
 def login(session, cpf, password, api_key, *, receipt=None, optimize_interactions=False,
           batch_captcha=False, aria_selection=False):
     """Populate a caller-owned fresh requests.Session, or raise a sanitized error.
@@ -277,7 +300,9 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
             receipt["captcha_http_status"] = response.status_code
             page = password_page(session, response)
             receipt["captcha_http_accepted_password_form"] = True
-            auth = GovBrAuth(session, NullCaptcha(), client_id=CLIENT, redirect_uri=PORTAL)
+            scope = parse_qs(urlsplit(browser_login.AUTHZ).query)['scope'][0]
+            auth = GovBrAuth(session, NullCaptcha(), client_id=CLIENT, redirect_uri=PORTAL,
+                             scope=scope, diagnostics=receipt)
             auth.page = page
             auth.state = expected_state.get("value")
             phase("release_browser")
@@ -286,7 +311,7 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         receipt["http_password_posts"] = 1
         auth.submit_password(password, cpf, captcha_required=False)
         phase("http_oauth_redirect")
-        hops = auth.finish()
+        hops = finish_oauth(auth, receipt)
         receipt["oauth_callback_received"] = True
         receipt["redirect_hops"] = len(hops)
         phase("http_api_session")

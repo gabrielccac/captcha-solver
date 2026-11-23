@@ -17,6 +17,22 @@ do envio da senha, o worker faz uma única nova tentativa de autenticação,
 com sessão e token novos. O recibo `pre_password_retry` identifica a primeira
 causa e informa se a recuperação funcionou.
 
+Quando o redirecionamento OAuth termina em HTTP 200 sem o callback esperado,
+`oauth_terminal` registra somente sinais limitados da página: formulário de
+login/OTP, autorização de dados, atualização cadastral, sessão expirada,
+indisponibilidade ou página desconhecida. Não inclui HTML, texto, valores ou URLs.
+Se não houver uma etapa interativa identificada, o transporte tenta uma única
+retomada SSO com novos `state`/`nonce`, usando somente GETs e os cookies existentes.
+`oauth_resume_retry` informa se recuperou. A retomada não abre outro browser,
+não resolve outro CAPTCHA e não repete a senha. Senha inválida e 2FA não disparam
+esse retry; uma página inconclusiva não comprova credencial inválida.
+
+`credential_status` distingue `valid`, `invalid`, `requires_two_factor` e
+`undetermined`. `next_action` orienta `use_credentials`, `check_credentials`,
+`complete_two_factor`, `retry_later`, `complete_govbr_step` ou `review_login_flow`.
+`retryable` permite programar uma tentativa posterior limitada; não significa
+que o retry interno teve sucesso nem autoriza repetição ilimitada.
+
 O workflow `inss-query.yml` autentica no gov.br, confirma acesso ao Meu INSS
 e entrega a credencial da API ao consumidor. As regras de consulta, seleção
 de benefícios, cálculo e escrita pertencem ao fluxo do consumidor.

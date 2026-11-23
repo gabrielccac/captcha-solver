@@ -44,12 +44,13 @@ def test_query_finishes_only_when_expected_and_delivered(
 
     assert runner.main() == exit_code
     receipt = json.loads((tmp_path / 'encrypted-query' / 'receipt.json').read_text())
-    assert receipt['success'] is (authenticated and not encrypt_fails)
+    consistent = worker_rc in (0, 3) and (worker_rc == 0) == authenticated
+    assert receipt['success'] is (authenticated and consistent and not encrypt_fails)
     assert receipt.get('result_class') == result_class
     assert 'fixture-access' not in json.dumps(receipt)
     assert 'fixture-mi' not in json.dumps(receipt)
     if not encrypt_fails:
-        assert receipt['code'] == code
+        assert receipt['code'] == (code if consistent else 'worker_incomplete')
         assert (tmp_path / 'encrypted-query' / 'result.cms').read_bytes() == b'test-ciphertext'
         payload = json.loads(encrypt.call_args.args[0])
         assert payload['validation']['result_class'] == result_class
