@@ -53,7 +53,10 @@ def test_nonretryable_results_do_not_repeat_authentication(code, posted):
     ('<button>Autorizar acesso e compartilhamento de dados</button>', 'govbr_interaction_required', 'consent'),
     ('<form>Atualize seus dados</form>', 'govbr_interaction_required', 'account_update'),
     ('<h1>Atualize seus dados</h1><form><input name="password"></form>', 'govbr_interaction_required', 'account_update'),
-    ('<p>Sessão expirada</p>', 'captcha_http_not_accepted', 'session_expired'),
+    ('<p>Sessão expirada</p>', 'login_response_unrecognized', 'session_expired'),
+    ('<main>Resposta inesperada</main>', 'login_response_unrecognized', 'unknown'),
+    ('<main>Serviço temporariamente indisponível</main>', 'login_response_unrecognized', 'service_error'),
+    ('<meta http-equiv="refresh" content="0;url=/login">', 'login_response_unrecognized', 'script_navigation'),
 ])
 def test_handoff_identifies_terminal_pages_without_submitting_password(html, code, kind):
     session = Mock()
@@ -64,6 +67,28 @@ def test_handoff_identifies_terminal_pages_without_submitting_password(html, cod
     assert error.value.code == code
     assert receipt['captcha_terminal']['kind'] == kind
     session.post.assert_not_called()
+
+
+@pytest.mark.parametrize('status,code', [(400, 'http_error'), (403, 'http_forbidden'), (429, 'rate_limited')])
+def test_generic_handoff_http_errors_keep_their_status_classification(status, code):
+    response = SimpleNamespace(status_code=status, text='<main>Resposta indisponível</main>',
+        url='https://sso.acesso.gov.br/login', headers={})
+    with pytest.raises(AuthError) as error:
+        password_page(Mock(), response, diagnostics={})
+    assert error.value.code == code
+    assert error.value.http_status == status
+
+
+@pytest.mark.parametrize('code,retryable', [
+    ('login_response_unrecognized', False),
+    ('captcha_http_not_accepted', True),
+    ('incomplete_http_response', True),
+])
+def test_login_outcome_retries_only_classified_transient_failures(code, retryable):
+    outcome = login_outcome(code, {})
+    assert outcome['retryable'] is retryable
+    if code == 'login_response_unrecognized':
+        assert outcome['next_action'] == 'review_login_flow'
 
 
 def test_password_terminal_captures_account_update_instead_of_blaming_password():

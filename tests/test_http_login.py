@@ -223,7 +223,7 @@ def test_failed_post_cannot_reuse_captcha():
 
 def test_password_form_required_after_captcha():
     response = SimpleNamespace(url="https://sso.acesso.gov.br/login", status_code=200,
-                               text="<html>captcha invÃ¡lido</html>")
+                               text="<html>captcha inválido</html>")
     with pytest.raises(AuthError, match="captcha_http_not_accepted"):
         password_page(Mock(), response)
 

@@ -91,7 +91,7 @@ def password_page(session, response, *, diagnostics=None):
         if response.status_code not in REDIRECTS:
             if diagnostics is not None:
                 diagnostics['captcha_terminal'] = diagnostic
-            raise AuthError("captcha_http_not_accepted")
+            raise AuthError("login_response_unrecognized", http_status=response.status_code)
         location = response.headers.get("Location")
         if not location:
             raise AuthError("captcha_redirect_missing")

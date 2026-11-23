@@ -13,7 +13,8 @@ def login_outcome(code, receipt):
     if code == 'govbr_interaction_required' or kind in ('consent', 'account_update'):
         action = 'complete_govbr_step'
     elif code in {'read_timeout', 'connect_timeout', 'connection_error', 'request_timeout',
-                  'captcha_http_not_accepted', 'captcha_invalid', 'captcha_selection_not_confirmed', 'captcha_unsolved'}:
+                  'incomplete_http_response', 'captcha_http_not_accepted', 'captcha_invalid',
+                  'captcha_selection_not_confirmed', 'captcha_unsolved'}:
         action = 'retry_later'
     else:
         action = 'review_login_flow'
