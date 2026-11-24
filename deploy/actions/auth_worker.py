@@ -51,6 +51,9 @@ if __name__ == '__main__':
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 payload = main()
     except Exception as error:
+        if os.environ.get('INSS_DIAG_DIR'):
+            import traceback
+            traceback.print_exc()
         payload = {'validation': {'success': False, 'code': 'auth_worker_failed',
                                   'error_type': type(error).__name__}, 'client_data': {}}
     finally:

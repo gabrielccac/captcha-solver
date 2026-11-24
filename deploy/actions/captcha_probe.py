@@ -42,6 +42,7 @@ class Probe:
         return self.state["attempts"][self.attempt - 1]
 
     def flush(self):
+        self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "observations.json").write_text(
             json.dumps(self.state, indent=1, default=str), encoding="utf-8")
 
