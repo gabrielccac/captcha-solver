@@ -23,6 +23,10 @@ RUN curl -fsSL 'https://apt.pop-os.org/release/pool/noble/fonts/2da23d5e76bf724c
 RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# Playwright's bundled node links against libatomic, which slim does not ship.
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY pyproject.toml README.md runner.py ./
 COPY src/ src/

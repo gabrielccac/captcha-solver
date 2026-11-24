@@ -14,9 +14,19 @@ AUTHZ = "https://sso.acesso.gov.br/authorize"
 SSO_ORIGIN = "https://sso.acesso.gov.br"
 DEFAULT_SCOPE = "openid profile email phone govbr_confiabilidades"
 REDIRECTS = (301, 302, 303, 307, 308)
+START_HOPS = 4
 INVALID_MSG = re.compile(r"Usu[aá]rio e/ou senha inv[aá]lidos|\bERL0003900\b", re.I)
 INVALID_CAPTCHA = re.compile(r"\bcaptcha\s+inv[aá]lido\b", re.I)
 TWO_FACTOR = re.compile(r'<input\b[^>]*\b(?:name|id)=["\']otpInput["\']', re.I)
+
+
+def fragment_param(url: str, name: str) -> str:
+    """Valor único de um parâmetro na fragmento da URL (o fragmento nunca vai ao servidor)."""
+    fragment = urlsplit(url).fragment
+    if "?" not in fragment:
+        return ""
+    values = parse_qs(fragment.split("?", 1)[1]).get(name, [])
+    return values[0] if len(values) == 1 else ""
 
 
 def safe_url(url: str) -> str:
@@ -58,9 +68,16 @@ class GovBrAuth:
     def __init__(self, session, captcha: CaptchaProvider, *,
                  client_id="comprasnet.gov.br",
                  redirect_uri="https://www.comprasnet.gov.br/seguro/landing_sso.asp",
-                 scope=DEFAULT_SCOPE, timeout=30, diagnostics=None):
+                 scope=DEFAULT_SCOPE, timeout=30, diagnostics=None, start_url=None,
+                 token_fragment_param=None):
         self.s = session
         self.captcha = captcha
+        self.start_url = start_url
+        # Alguns clientes recebem o token no fragmento do redirecionamento final, em
+        # vez de um `code` para trocar: o gateway faz a troca e devolve `#/?token=...`.
+        self.token_fragment_param = token_fragment_param
+        self.application_token: str | None = None
+        self.state_delegated = start_url is not None
         self.client_id = client_id
         self.redirect_uri = redirect_uri
         self.scope = scope
@@ -132,6 +149,8 @@ class GovBrAuth:
         })
 
     def start(self) -> str:
+        if self.start_url is not None:
+            return self.start_external()
         url = self.authorize_url()
         r = self._get(url)
         self._check_response(r)
@@ -142,6 +161,40 @@ class GovBrAuth:
         self._login_url = self._check_url(urljoin(url, loc))
         self.authorization_id = ids[0]
         return self.authorization_id
+
+    def start_external(self) -> str:
+        """Inicia no cliente OAuth2 da própria aplicação, que gera state, nonce e PKCE.
+
+        Usado quando o portal é um cliente OAuth2 de servidor (ex.: gateway do
+        CadÚnico). O `start_url` é do portal; seguimos o encadeamento até a página de
+        login do SSO e lemos o `authorization_id` do `Location`. Nenhum parâmetro do
+        pedido de autorização nasce aqui, então `state` permanece `None` e o callback
+        é aceito sem comparação — quem revalida o state é a aplicação.
+        """
+        self.authorization_id = None
+        self.authorization_code = None
+        self.page = None
+        self._next_location = ""
+        self._login_url = ""
+        self.state = None
+        self.state_delegated = True
+        url = self._check_url(self.start_url, sso_only=False)
+        for _ in range(START_HOPS):
+            response = self._get(url)
+            self._check_response(response)
+            location = response.headers.get("Location", "")
+            if response.status_code not in REDIRECTS or not location:
+                raise AuthError("gateway_start_failed", http_status=response.status_code)
+            url = self._check_url(urljoin(url, location))
+            ids = parse_qs(urlsplit(url).query).get("authorization_id", [])
+            if not ids:
+                continue
+            if len(ids) != 1 or not ids[0]:
+                raise AuthError("gateway_start_failed")
+            self._login_url = url
+            self.authorization_id = ids[0]
+            return self.authorization_id
+        raise AuthError("gateway_start_failed")
 
     def resume(self, max_hops: int = 8):
         """Obtain a fresh code using existing SSO cookies, without submitting forms."""
@@ -259,7 +312,10 @@ class GovBrAuth:
         executa JavaScript de aplicações como Meu INSS.
         """
         self.authorization_code = None
+        self.application_token = None
         loc, self._next_location = self._next_location, ""
+        if self.state_delegated and self.diagnostics is not None:
+            self.diagnostics["state_delegated"] = True
         hops = []
         callback_code = None
         target = urlsplit(self.redirect_uri)
@@ -267,13 +323,20 @@ class GovBrAuth:
             if not loc:
                 break
             self._check_url(loc, sso_only=False)
+            if self.token_fragment_param:
+                token = fragment_param(loc, self.token_fragment_param)
+                if token:
+                    self.application_token = token
+                    if self.diagnostics is not None:
+                        self.diagnostics["token_in_redirect"] = True
+                    return hops
             parts = urlsplit(loc)
             query = parse_qs(parts.query)
             if parts.netloc == target.netloc and parts.path == target.path:
                 if "error" in query:
                     raise AuthError("oauth_error")
                 if query.get("code"):
-                    if self.state is None or query.get("state") != [self.state]:
+                    if not self.state_delegated and query.get("state") != [self.state]:
                         raise AuthError("state_mismatch")
                     if len(query["code"]) != 1:
                         raise AuthError("oauth_callback_ambiguous")
