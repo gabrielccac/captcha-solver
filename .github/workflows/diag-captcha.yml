@@ -14,6 +14,7 @@ jobs:
       matrix: ${{ steps.build.outputs.matrix }}
       max_parallel: ${{ steps.build.outputs.max_parallel }}
       attempts: ${{ steps.build.outputs.attempts }}
+      query: ${{ steps.build.outputs.query }}
       wave: ${{ steps.build.outputs.wave }}
     steps:
       - name: Expand the wave into one job per run
@@ -32,6 +33,7 @@ jobs:
           print('matrix=' + json.dumps({'include': runs}))
           print('max_parallel=' + str(plan.get('max_parallel', 3)))
           print('attempts=' + str(plan.get('attempts', 1)))
+          print('query=' + str(plan.get('query', 0)))
           print('wave=' + str(plan['wave']))
           PY
   diag:
@@ -53,6 +55,7 @@ jobs:
           INSS_DIAG: '1'
           INSS_DIAG_MODE: ${{ matrix.mode }}
           INSS_DIAG_ATTEMPTS: ${{ needs.plan.outputs.attempts }}
+          INSS_DIAG_QUERY: ${{ needs.plan.outputs.query }}
           GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
           GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
           OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}

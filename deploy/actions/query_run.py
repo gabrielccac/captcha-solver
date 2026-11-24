@@ -208,7 +208,8 @@ def main():
                 command += ['--mount', f'type=bind,src={diag.resolve()},dst=/diag',
                             '--env', 'INSS_DIAG_DIR=/diag',
                             '--env', 'INSS_TRANSPORT=' + (os.environ.get('INSS_DIAG_MODE') or 'replay').strip(),
-                            '--env', 'INSS_MAX_ATTEMPTS=' + (os.environ.get('INSS_DIAG_ATTEMPTS') or '1').strip()]
+                            '--env', 'INSS_MAX_ATTEMPTS=' + (os.environ.get('INSS_DIAG_ATTEMPTS') or '1').strip(),
+                            '--env', 'INSS_DIAG_QUERY=' + (os.environ.get('INSS_DIAG_QUERY') or '0').strip()]
                 dependencies = Path('diag-deps')
                 if dependencies.is_dir():
                     command += ['--mount', f'type=bind,src={dependencies.resolve()},dst=/diag-deps,readonly']

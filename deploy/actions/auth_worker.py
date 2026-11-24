@@ -3,7 +3,9 @@ from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 import os
+from pathlib import Path
 import sys
+import time
 
 sys.path.insert(0, '/app/experiments/gha-webkit')
 import smoke
@@ -18,6 +20,30 @@ HEADER_NAMES = (
 )
 
 
+def query_diagnostics(session, cpf):
+    """Request the real documents once and publish their status and hashes, never the PDFs."""
+    directory = os.environ.get('INSS_DIAG_DIR')
+    if not directory or os.environ.get('INSS_DIAG_QUERY') != '1':
+        return
+    from inss import actions_query
+    started = time.monotonic()
+    record = {}
+    try:
+        result = actions_query.run(session, cpf, {'years': 1, 'medical_reports': False})
+        record.update(complete=result.get('complete'), statement=result.get('statement'),
+                      history_windows=[{key: window.get(key) for key in ('window', 'http_status', 'error')}
+                                       for window in (result.get('history') or {}).get('windows', [])],
+                      documents=[{key: document.get(key) for key in ('kind', 'filename', 'bytes', 'sha256')}
+                                 for document in result.get('documents', [])],
+                      benefits=len(result.get('benefits') or []),
+                      letters=len(result.get('concession_letters') or []),
+                      errors=result.get('errors'))
+    except Exception as error:
+        record['error'] = f'{type(error).__name__}: {str(error)[:200]}'
+    record['elapsed_ms'] = round((time.monotonic() - started) * 1000)
+    (Path(directory) / 'query.json').write_text(json.dumps(record, indent=1), encoding='utf-8')
+
+
 def main():
     login_input = json.loads(sys.stdin.readline())
     client_data = {}
@@ -26,6 +52,7 @@ def main():
         headers = {name: session.headers[name] for name in HEADER_NAMES}
         client_data['api_credentials'] = dict(base_url=smoke.http_login.API.rstrip('/'), cpf=cpf, headers=headers,
             validity=token_validity(headers['Authorization'].removeprefix('Bearer '), headers['miToken']))
+        query_diagnostics(session, cpf)
 
     def authenticate():
         client_data.clear()
