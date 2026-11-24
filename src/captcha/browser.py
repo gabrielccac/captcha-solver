@@ -1,11 +1,50 @@
-"""Browser lifecycle: Xvfb + real Chrome (user-data-dir) + CDP wait + cleanup.
+"""Browser lifecycle: real Chrome (user-data-dir) + CDP wait + cleanup.
 No Playwright launch flags -> cleanest fingerprint; control via CDP attach.
+No Linux, um Xvfb serve de display; no Windows e no macOS o Chrome usa o display
+do próprio usuário, que é onde o login deve acontecer.
 """
 import os
 import socket
 import subprocess
+import sys
+import tempfile
 import time
 import urllib.request
+
+CHROME_PATHS = {
+    "nt": [r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+           r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+           r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
+           r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+           r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"],
+    "darwin": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+    "posix": ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"],
+}
+
+
+def _platform():
+    return "nt" if os.name == "nt" else ("darwin" if sys.platform == "darwin" else "posix")
+
+
+def _x11():
+    """Xvfb só existe no Linux: Windows e macOS desenham na tela do usuário."""
+    return _platform() == "posix"
+
+
+def _log(name):
+    return os.path.join(tempfile.gettempdir(), f"{name}.log")
+
+
+def chrome_binary():
+    """Executável do Chrome: CHROME_BIN manda, depois os caminhos do sistema."""
+    explicit = os.environ.get("CHROME_BIN")
+    if explicit:
+        return explicit
+    for candidate in CHROME_PATHS[_platform()]:
+        path = os.path.expandvars(candidate)
+        if os.path.isfile(path):
+            return path
+    raise RuntimeError("Chrome não encontrado; defina CHROME_BIN com o executável")
 
 
 def _free_display(start=97):
@@ -28,7 +67,7 @@ def _port_open(port):
 
 class ManagedBrowser:
     def __init__(self, profile_dir, cdp_port=9223, display=None, lang="pt-BR",
-                 window="1280,900", chrome_bin="/usr/bin/google-chrome", quiet=False):
+                 window="1280,900", chrome_bin=None, quiet=False):
         self.profile_dir = profile_dir
         self.cdp_port = cdp_port
         self.display = display or _free_display()
@@ -56,29 +95,35 @@ class ManagedBrowser:
         if _port_open(self.cdp_port):
             raise RuntimeError("CDP port already in use; choose another --cdp-port")
         os.makedirs(self.profile_dir, exist_ok=True)
-        env = dict(os.environ, DISPLAY=f":{self.display}", XDG_SESSION_TYPE="x11")
-        env.pop("WAYLAND_DISPLAY", None)
-        xv = subprocess.Popen(["Xvfb", f":{self.display}", "-screen", "0",
-                               f"{self.window.split(',')[0]}x{self.window.split(',')[1]}x24"],
-                              stdout=open(os.devnull if self.quiet else f"/tmp/xvfb{self.display}.log", "ab"),
-                              stderr=subprocess.STDOUT)
-        self.procs.append(xv)
-        if wait_ready:
-            self._wait_display(xv)
-        else:
-            time.sleep(2)
-        if xv.poll() is not None:
-            self.stop()
-            raise RuntimeError("Xvfb exited during startup")
+        env = dict(os.environ)
+        virtual = _x11()
+        if virtual:
+            env.update(DISPLAY=f":{self.display}", XDG_SESSION_TYPE="x11")
+            env.pop("WAYLAND_DISPLAY", None)
+            xv = subprocess.Popen(["Xvfb", f":{self.display}", "-screen", "0",
+                                   f"{self.window.split(',')[0]}x{self.window.split(',')[1]}x24"],
+                                  stdout=open(os.devnull if self.quiet
+                                              else _log(f"xvfb{self.display}"), "ab"),
+                                  stderr=subprocess.STDOUT)
+            self.procs.append(xv)
+            if wait_ready:
+                self._wait_display(xv)
+            else:
+                time.sleep(2)
+            if xv.poll() is not None:
+                self.stop()
+                raise RuntimeError("Xvfb exited during startup")
+        command = [self.chrome_bin or chrome_binary(), f"--user-data-dir={self.profile_dir}"]
+        if virtual:
+            command.append("--ozone-platform=x11")
+        command += [f"--remote-debugging-port={self.cdp_port}",
+                    "--no-first-run", "--no-default-browser-check",
+                    "--disable-dev-shm-usage", "--renderer-process-limit=4",
+                    f"--window-size={self.window}",
+                    f"--lang={self.lang}", "about:blank"]
         ch = subprocess.Popen(
-            [self.chrome_bin, f"--user-data-dir={self.profile_dir}",
-             "--ozone-platform=x11",
-             f"--remote-debugging-port={self.cdp_port}",
-             "--no-first-run", "--no-default-browser-check",
-             "--disable-dev-shm-usage", "--renderer-process-limit=4",
-             f"--window-size={self.window}",
-             f"--lang={self.lang}", "about:blank"],
-            env=env, stdout=open(os.devnull if self.quiet else "/tmp/cdp-chrome-run.log", "ab"),
+            command, env=env,
+            stdout=open(os.devnull if self.quiet else _log("cdp-chrome-run"), "ab"),
             stderr=subprocess.STDOUT)
         self.procs.append(ch)
         deadline = time.time() + timeout

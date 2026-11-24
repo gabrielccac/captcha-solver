@@ -40,11 +40,19 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--document", choices=("comprovante", "consulta", "all"), default="all")
     ap.add_argument("--env-file")
+    ap.add_argument("--credentials-stdin", action="store_true",
+                    help="Lê {cpf, password, api_key} da entrada padrão, sem variável de ambiente")
     ap.add_argument("--cdp-url", help="Chrome ja aberto com --remote-debugging-port")
     args = ap.parse_args()
     os.umask(0o077)
     values = load_env_file(args.env_file) if args.env_file else dict(os.environ)
     values = {key: values.get(key) or os.environ.get(key, "") for key in KEYS}
+    if args.credentials_stdin:
+        sent = json.loads(sys.stdin.readline(8192))
+        for key, given in (("GOVBR_CPF", "cpf"), ("GOVBR_PASSWORD", "password"),
+                           ("OPENROUTER_API_KEY", "api_key")):
+            if sent.get(given):
+                values[key] = sent[given]
     cpf, password, api_key = credentials(values)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

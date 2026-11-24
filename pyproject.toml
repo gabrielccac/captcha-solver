@@ -26,6 +26,7 @@ comprasnet-login = "comprasnet.workflow:main"
 dataprev-query = "dataprev.query:main"
 dataprev-flow = "dataprev.flow:main"
 inss-mcp = "inss.mcp_server:main"
+dataprev-mcp = "dataprev.mcp_server:main"
 inss-hosted = "inss.hosted:main"
 
 [tool.setuptools.packages.find]
