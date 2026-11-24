@@ -126,6 +126,28 @@ def summary(payload):
     return result
 
 
+def egress():
+    """Resolve the runner's public identity; the guard must never block on its own failure."""
+    record = {'ip': None, 'org': None, 'country': None}
+    try:
+        request = Request('https://ipinfo.io/json', headers={'Accept': 'application/json',
+                                                            'User-Agent': 'captcha-solver-actions/1.0'})
+        with urlopen(request, timeout=8) as response:
+            record.update({key: value for key, value in json.loads(response.read(4096)).items()
+                           if key in record})
+    except Exception as error:
+        record['error'] = type(error).__name__
+    return record
+
+
+def blocked_egress(identity):
+    """GOV.BR's edge stalls or resets the token POST from these networks; the login cannot pass."""
+    blocked = {value.strip().upper() for value in os.environ.get('INSS_BLOCKED_ASN', 'AS8075').split(',')
+               if value.strip()}
+    org = str(identity.get('org') or '').upper()
+    return (org.split(' ')[0] if org else '') in blocked, sorted(blocked)
+
+
 def environment(directory, mode):
     """Record the runner's egress identity and the diagnostic inputs beside the captures."""
     record = {'mode': mode, 'attempts': os.environ.get('INSS_DIAG_ATTEMPTS', '1'),
@@ -167,6 +189,15 @@ def main():
     started = time.monotonic()
     callback_url, sealed_result = '', None
     try:
+        if os.environ.get('INSS_EGRESS_GUARD') == '1':
+            identity = egress()
+            blocked, watched = blocked_egress(identity)
+            result['egress'] = identity
+            if blocked:
+                result.update(code='runner_egress_blocked', credential_status='undetermined',
+                              next_action='retry_later', retryable=True, blocked_asn=watched,
+                              result_class='technical_failure')
+                raise SystemExit(4)
         result_key = None
         if sealed:
             claim = json.loads(envelope('open', {'sealed': sealed, 'private_key': private_key,
@@ -267,6 +298,8 @@ def main():
             else:
                 (output / 'result.cms').write_bytes(encrypt(raw, recipient))
             result = report
+    except SystemExit:
+        pass
     except Exception as error:
         result['error_type'] = type(error).__name__
     finally:
@@ -293,7 +326,9 @@ def main():
         values.clear()
         print('SMOKE_RESULT ' + rendered, flush=True)
     completed = result['success'] and result.get('worker_returncode') == 0
-    return 0 if completed or result.get('result_class') == 'client_action_required' else 3
+    if completed or result.get('result_class') == 'client_action_required':
+        return 0
+    return 4 if result.get('code') == 'runner_egress_blocked' else 3
 
 
 if __name__ == '__main__':
