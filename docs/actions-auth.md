@@ -39,6 +39,11 @@ esse retry; uma página inconclusiva não comprova credencial inválida.
 `retryable` permite programar uma tentativa posterior limitada; não significa
 que o retry interno teve sucesso nem autoriza repetição ilimitada.
 
+Algumas faixas de rede do runner não conseguem completar o POST do CAPTCHA: o
+job encerra em segundos com `runner_egress_blocked`, `retryable` e o ASN
+observado, e a recuperação é um novo despacho em outro runner. Veja
+[bloqueio de egress](egress-blocking.md).
+
 O workflow `inss-query.yml` autentica no gov.br, confirma acesso ao Meu INSS
 e entrega a credencial da API ao consumidor. As regras de consulta, seleção
 de benefícios, cálculo e escrita pertencem ao fluxo do consumidor.
