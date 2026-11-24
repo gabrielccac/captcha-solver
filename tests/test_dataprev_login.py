@@ -157,6 +157,34 @@ def test_token_is_also_read_from_the_url_fragment():
     assert dataprev_login.application_token(page) == "fixture-fragment"
 
 
+def test_wait_timeout_records_the_fragment_shape_without_token_values(monkeypatch):
+    page = Page("https://cadunico.dataprev.gov.br/#/home?retorno=valor-nao-lido", token="")
+    page.evaluate = lambda script: [] if "localStorage" in script else ""
+    monkeypatch.setattr(dataprev_login, "login_failure", lambda page: None)
+    receipt = {}
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.2) == ""
+    assert receipt["final_fragment_params"] == ["retorno"]
+    assert receipt["final_storage_keys"] == []
+    assert "valor-nao-lido" not in json.dumps(receipt)
+
+
+def test_wait_timeout_records_the_localstorage_keys_when_the_fragment_is_empty(monkeypatch):
+    page = Page("https://cadunico.dataprev.gov.br/#/home", token="")
+    page.evaluate = lambda script: ["session", "token", "usuario"] if "Object.keys" in script else ""
+    monkeypatch.setattr(dataprev_login, "login_failure", lambda page: None)
+    receipt = {}
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.2) == ""
+    assert receipt["final_fragment_params"] == []
+    assert receipt["final_storage_keys"] == ["session", "token", "usuario"]
+
+
+def test_login_reports_phase_progress_as_it_happens(monkeypatch):
+    session, server = login_session(monkeypatch)
+    seen = []
+    dataprev_login.login(session, CPF, PASSWORD, API_KEY, receipt={}, progress=seen.append)
+    assert seen == ["browser_start", "identity"]
+
+
 def test_wait_reports_the_final_host_when_the_token_never_arrives(monkeypatch):
     page = Page("https://sso.acesso.gov.br/login?client_id=fixture")
     monkeypatch.setattr(dataprev_login, "login_failure", lambda page: None)

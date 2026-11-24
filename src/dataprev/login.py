@@ -11,7 +11,7 @@ import io
 import time
 from contextlib import ExitStack, redirect_stderr
 from tempfile import TemporaryDirectory
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
@@ -33,6 +33,21 @@ PASSWORD_SELECTOR = 'input[type="password"]'
 MODEL = "meta/muse-spark-1.3-contributor"
 MAX_ROUNDS = 3
 WAIT_SECONDS = 40
+
+
+def fragment_params(fragment):
+    """Nomes dos parâmetros do fragmento, sem valores: o token pode estar nele."""
+    if "?" not in fragment:
+        return []
+    return sorted(parse_qs(fragment.split("?", 1)[1], keep_blank_values=True))
+
+
+def storage_keys(page):
+    """Chaves do localStorage da página final: nomes, nunca valores."""
+    try:
+        return sorted(page.evaluate("() => Object.keys(window.localStorage)") or [])
+    except PlaywrightError:
+        return []
 
 
 def application_token(page):
@@ -76,6 +91,8 @@ def wait_for_token(page, receipt, timeout=WAIT_SECONDS):
     receipt["final_host"] = url.hostname or ""
     receipt["final_path"] = url.path
     receipt["final_has_hash"] = bool(url.fragment)
+    receipt["final_fragment_params"] = fragment_params(url.fragment)
+    receipt["final_storage_keys"] = storage_keys(page)
     return ""
 
 
@@ -203,7 +220,7 @@ def verify_token(session, token, cpf, receipt) -> None:
         raise AuthError("identity_mismatch")
 
 
-def login(session, cpf, password, api_key, *, receipt=None, cdp_url=""):
+def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None):
     """Autentica a `requests.Session` do chamador no cadunico.dataprev.gov.br.
 
     Um login por chamada. Ao final a sessão carrega ``Authorization: Bearer`` com o
@@ -219,6 +236,8 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url=""):
     def phase(name):
         receipt["phase_events"].append({"phase": name,
             "elapsed_ms": round((time.monotonic() - started) * 1000)})
+        if progress:
+            progress(name)
 
     observer = observe(session, receipt)
     observer.__enter__()

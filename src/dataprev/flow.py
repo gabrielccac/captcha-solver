@@ -60,13 +60,28 @@ def main():
     receipt = {"document": args.document, "success": False, "documents": {}, "errors": []}
     auth_receipt = {}
     session = requests.Session()
+
+    def credenciamento_em_curso(phase_name):
+        """Escreve o recibo durante o login, para acompanhar sem esperar o fim."""
+        auth_receipt["phase_now"] = phase_name
+        try:
+            (out / "receipt.json").write_text(json.dumps(
+                {**receipt, "stage": "credenciamento", "success": False,
+                 "credenciamento": auth_receipt}, indent=1, ensure_ascii=False),
+                encoding="utf-8")
+        except OSError:
+            pass
+
     try:
         try:
-            login(session, cpf, password, api_key, receipt=auth_receipt, cdp_url=args.cdp_url or "")
+            login(session, cpf, password, api_key, receipt=auth_receipt,
+                  cdp_url=args.cdp_url or "", progress=credenciamento_em_curso)
         except AuthError as error:
+            auth_receipt.pop("phase_now", None)
             receipt.update(code=error.code, http_status=error.http_status, stage="credenciamento",
                            credenciamento=auth_receipt)
             raise
+        auth_receipt.pop("phase_now", None)
         receipt["credenciamento"] = auth_receipt
         token = session.headers["Authorization"].removeprefix("Bearer ")
         receipt.update(collect(DataprevClient(token), out, args.document))
