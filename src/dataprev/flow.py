@@ -90,7 +90,12 @@ def main():
     def credenciamento_em_curso(phase_name):
         """Escreve o recibo durante o login, para acompanhar sem esperar o fim."""
         decorrido = (auth_receipt.get("phase_events") or [{}])[-1].get("elapsed_ms", 0)
-        registrar("credenciamento", phase=phase_name, elapsed_ms=decorrido)
+        campos = {"phase": phase_name, "elapsed_ms": decorrido}
+        if phase_name == "browser_start":
+            campos.update(browser_version=auth_receipt.get("browser_version"),
+                          browser_source=auth_receipt.get("browser_source"),
+                          cdp_port=auth_receipt.get("cdp_port"))
+        registrar("credenciamento", **campos)
         auth_receipt["phase_now"] = phase_name
         try:
             (out / "receipt.json").write_text(json.dumps(

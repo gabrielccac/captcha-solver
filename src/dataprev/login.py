@@ -138,6 +138,7 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url=""):
             manager = ManagedBrowser(profile, quiet=True)
             resources.callback(manager.stop)
             browser = playwright.chromium.connect_over_cdp(manager.start(wait_ready=True))
+            receipt["cdp_port"] = manager.cdp_port
             resources.callback(browser.close)
         page = browser.contexts[0].pages[0]
         receipt["browser_version"] = browser.version
