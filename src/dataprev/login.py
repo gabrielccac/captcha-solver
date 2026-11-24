@@ -249,7 +249,8 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url=""):
     except requests.RequestException as error:
         receipt["code"] = request_failure(error, receipt)
         raise AuthError(receipt["code"]) from None
-    except PlaywrightError:
+    except PlaywrightError as error:
+        receipt["browser_error_type"] = type(error).__name__
         receipt["code"] = "browser_error"
         raise AuthError("browser_error") from None
     except Exception as error:

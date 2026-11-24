@@ -36,6 +36,14 @@ jobs:
       - name: Instalar dependências
         run: uv sync --extra hosted
 
+      - name: Conferir se o runner alcança o CadÚnico e o SSO
+        run: |
+          set -euo pipefail
+          for url in https://cadunico.dataprev.gov.br/                      https://cadunico.dataprev.gov.br/transacional/api/oauth2/authorization/gateway-transacional                      https://sso.acesso.gov.br/login; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 --tlsv1.2 --tls-max 1.2 "$url" || echo "erro")
+            echo "$url -> $code"
+          done
+
       - name: Credenciar no gov.br e baixar os documentos
         env:
           GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
@@ -66,6 +74,7 @@ jobs:
                   "identity_status": (data.get("credenciamento") or {}).get("identity_status"),
                   "sso_reused": (data.get("credenciamento") or {}).get("sso_reused"),
                   "phase_ms": (data.get("credenciamento") or {}).get("phase_ms"),
+                  "browser_error_type": (data.get("credenciamento") or {}).get("browser_error_type"),
               },
           }
           print(json.dumps(resumo, indent=1, ensure_ascii=False))
