@@ -134,6 +134,26 @@ class NoDisplayTests(unittest.TestCase):
         self.assertEqual(portas, ["--remote-debugging-port=45123", "--remote-debugging-port=45124"])
         self.assertEqual((primeiro.cdp_port, segundo.cdp_port), (45123, 45124))
 
+    def test_headless_skips_the_virtual_display_and_its_flag(self):
+        chrome = Mock()
+        with (
+            tempfile.TemporaryDirectory() as profile,
+            patch("captcha.browser._port_open", return_value=False),
+            patch("captcha.browser._x11", return_value=True),
+            patch("captcha.browser.chrome_binary", return_value="/opt/chrome"),
+            patch("captcha.browser.subprocess.Popen", return_value=chrome) as spawn,
+            patch("captcha.browser.open", mock_open()),
+            patch("captcha.browser.urllib.request.urlopen"),
+        ):
+            browser = ManagedBrowser(profile, headless=True)
+            browser.start()
+            browser.stop()
+        spawn.assert_called_once()
+        comando = spawn.call_args[0][0]
+        self.assertNotIn("Xvfb", comando)
+        self.assertNotIn("--ozone-platform=x11", comando)
+        self.assertIn("--headless=new", comando)
+
     def test_missing_chrome_reports_a_clear_error(self):
         with (
             patch.dict(os.environ, {}, clear=True),

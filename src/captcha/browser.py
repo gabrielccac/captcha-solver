@@ -128,7 +128,7 @@ class ManagedBrowser:
             raise RuntimeError("CDP port already in use; choose another --cdp-port")
         os.makedirs(self.profile_dir, exist_ok=True)
         env = dict(os.environ)
-        virtual = _x11()
+        virtual = _x11() and not self.headless
         if virtual:
             env.update(DISPLAY=f":{self.display}", XDG_SESSION_TYPE="x11")
             env.pop("WAYLAND_DISPLAY", None)
