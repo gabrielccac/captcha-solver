@@ -89,7 +89,10 @@ def main(*, on_authenticated=None, credentials=None):
                     result['independent_api_http_status'] = response.status_code
                 assert result['independent_api_http_status'] == 200 and receipt['api_session_verified']
                 assert receipt['http_password_posts'] == 1 and receipt['browser_password_posts'] == 0
-                assert receipt['token_captured_before_browser_send']
+                if receipt.get('transport', 'replay') == 'native':
+                    assert receipt['browser_captcha_posts'] == 1
+                else:
+                    assert receipt['token_captured_before_browser_send']
                 result['access_token_present'] = bool(client.headers.get('Authorization','').startswith('Bearer '))
                 result['mi_token_present'] = bool(client.headers.get('miToken'))
                 claims = token_claims(client.headers['Authorization'].removeprefix('Bearer '))

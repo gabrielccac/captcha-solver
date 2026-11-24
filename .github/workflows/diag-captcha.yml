@@ -1,0 +1,73 @@
+name: Captcha diagnostic lab
+run-name: diag ${{ inputs.mode }} #${{ inputs.index }} ${{ inputs.tag }}
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Transport under test (replay, native, curl)
+        required: true
+        default: replay
+        type: choice
+        options: [replay, native, curl]
+      index:
+        description: Identificador da execução dentro do lote
+        required: true
+        type: string
+      tag:
+        description: Rótulo do lote para agrupar artefatos
+        required: false
+        default: wave1
+        type: string
+      attempts:
+        description: Tentativas por execução (1 mede o transporte)
+        required: false
+        default: '1'
+        type: string
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: diag-${{ inputs.tag }}-${{ inputs.mode }}-${{ inputs.index }}
+  cancel-in-progress: false
+jobs:
+  diag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    environment: n8n-inss-query
+    steps:
+      - name: Prepare optional browser-like HTTP transport
+        continue-on-error: true
+        run: python3 -m pip install --quiet --target diag-deps curl_cffi
+      - name: Run one instrumented login
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          INSS_DIAG: '1'
+          INSS_DIAG_MODE: ${{ inputs.mode }}
+          INSS_DIAG_ATTEMPTS: ${{ inputs.attempts }}
+          GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
+          GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
+          OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}
+          QUERY_RECIPIENT_CERT: ${{ secrets.SMOKE_QUERY_RECIPIENT_CERT }}
+        run: |
+          set -euo pipefail
+          export INSS_SOURCE_DIR="$(mktemp -d)"
+          trap 'rm -rf -- "$INSS_SOURCE_DIR"' EXIT
+          GH_TOKEN="$GHCR_TOKEN" gh api "repos/$GITHUB_REPOSITORY/tarball/$GITHUB_SHA" |
+            tar -xz --strip-components=1 -C "$INSS_SOURCE_DIR"
+          python3 "$INSS_SOURCE_DIR/deploy/actions/query_run.py"
+      - name: Publish challenge pixels and decisions
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: captcha-diag-${{ inputs.mode }}-${{ inputs.index }}
+          path: captcha-diag/
+          retention-days: 3
+          if-no-files-found: warn
+      - name: Publish sanitized receipt
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: captcha-receipt-${{ inputs.mode }}-${{ inputs.index }}
+          path: encrypted-query/
+          retention-days: 3
+          if-no-files-found: warn

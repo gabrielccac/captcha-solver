@@ -1,4 +1,5 @@
 """Bounded fresh-session recovery before any password has been submitted."""
+import os
 import time
 
 MAX_ATTEMPTS = 3
@@ -7,6 +8,15 @@ HANDOFF_ERRORS = {'captcha_http_not_accepted', 'upstream_request_rejected', 'rea
                   'request_timeout', 'connection_error', 'incomplete_http_response'}
 ENGINE_ERRORS = {'captcha_unsolved', 'captcha_selection_not_confirmed', 'captcha_images_changed',
                  'captcha_token_not_captured'}
+
+
+def attempt_limit():
+    """Diagnostic runs set INSS_MAX_ATTEMPTS=1 to measure one transport, not the retry policy."""
+    try:
+        requested = int(os.environ.get('INSS_MAX_ATTEMPTS', MAX_ATTEMPTS))
+    except ValueError:
+        return MAX_ATTEMPTS
+    return min(MAX_ATTEMPTS, max(1, requested))
 
 
 def retry_allowed(result):
@@ -24,6 +34,7 @@ def retry_allowed(result):
 
 def authenticate_with_retry(authenticate):
     started = time.monotonic()
+    limit = attempt_limit()
     history = []
     while True:
         result = authenticate()
@@ -52,14 +63,14 @@ def authenticate_with_retry(authenticate):
         if not eligible:
             stop = 'success' if result['success'] else 'not_retryable'
             break
-        if len(history) >= MAX_ATTEMPTS:
+        if len(history) >= limit:
             stop = 'attempt_limit'
             break
         if spent + estimated_next > RETRY_BUDGET_MS:
             stop = 'time_budget'
             break
     result['elapsed_ms'] = spent
-    result['auth_retry'] = dict(attempts=len(history), max_attempts=MAX_ATTEMPTS,
+    result['auth_retry'] = dict(attempts=len(history), max_attempts=limit,
         budget_ms=RETRY_BUDGET_MS, stop_reason=stop,
         recovered=len(history) > 1 and result['success'], history=history)
     if len(history) > 1 and history[0].get('failure_stage') == 'http_consume_captcha':

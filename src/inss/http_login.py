@@ -3,10 +3,12 @@ import argparse
 from contextlib import ExitStack, redirect_stderr
 import io
 import json
+import os
 from pathlib import Path
 import socket
 import time
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlsplit
 import uuid
 
@@ -16,7 +18,8 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright
 from auth.browser_captcha import adopt
 from auth.captcha import NullCaptcha
 from auth.govbr import AuthError, GovBrAuth
-from auth.handoff import CaptchaHandoff, HANDOFF_SELECTOR, SSO, password_page
+from auth.handoff import (CaptchaHandoff, HANDOFF_SELECTOR, SSO, consume_with_curl,
+                          password_page, trusted_sso)
 from auth.page_diagnostics import is_upstream_rejection_page
 from captcha.browser import ManagedBrowser
 from captcha import hcaptcha
@@ -166,14 +169,16 @@ def finish_oauth(auth, receipt):
 
 
 def login(session, cpf, password, api_key, *, receipt=None, optimize_interactions=False,
-          batch_captcha=False, aria_selection=False):
+          batch_captcha=False, aria_selection=False, transport=None):
     """Populate a caller-owned fresh requests.Session, or raise a sanitized error.
 
     One login per call, without password/token retries. Chrome and Xvfb close
     before password submission. Callers must close the HTTP session themselves.
     """
     receipt = {} if receipt is None else receipt
+    transport = transport or os.environ.get("INSS_TRANSPORT", "replay")
     receipt.update(success=False, api_session_verified=False, browser_password_posts=0,
+                   browser_captcha_posts=0, transport=transport,
                    http_password_posts=0, http_captcha_posts=0, phase_events=[],
                    model=MODEL, reasoning_effort="minimal")
     receipt.pop("failure_stage", None)
@@ -240,7 +245,7 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
             page.on("request", track)
             phase("authorize")
             browser_login.goto_login(page)
-            captured = CaptchaHandoff()
+            captured = CaptchaHandoff(native=transport == "native")
             page.route("https://sso.acesso.gov.br/**", captured.intercept)
             phase("cpf")
             masked=f"{cpf[:3]}.{cpf[3:6]}.{cpf[6:9]}-{cpf[9:]}"
@@ -290,19 +295,44 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
                         break
             if captured.captured_at is None and not done:
                 raise AuthError("captcha_unsolved")
-            # A minted token can precede the callback POST; pump browser events first.
-            page.wait_for_selector(HANDOFF_SELECTOR, timeout=15000)
-            if captured.captured_at is None:
-                raise AuthError("captcha_token_not_captured")
-            receipt["token_captured_before_browser_send"] = True
-            adopt(page, session)
-            receipt["token_age_at_http_post_ms"] = round((time.monotonic() - captured.captured_at) * 1000)
-            phase("http_consume_captcha")
-            receipt["http_captcha_posts"] = 1
-            response = captured.consume(session)
-            receipt["captcha_http_status"] = response.status_code
-            page = password_page(session, response, diagnostics=receipt)
-            receipt["captcha_http_accepted_password_form"] = True
+            if transport == "native":
+                # The browser owns the token POST; only the resulting page moves to HTTP.
+                deadline = time.monotonic() + 25
+                while not captured.observed and time.monotonic() < deadline:
+                    page.wait_for_timeout(200)
+                if not captured.observed:
+                    raise AuthError("captcha_token_not_captured")
+                receipt["browser_captcha_posts"] = 1
+                phase("http_consume_captcha")
+                deadline = time.monotonic() + 25
+                while time.monotonic() < deadline:
+                    if page.query_selector('input[type="password"]'):
+                        break
+                    page.wait_for_timeout(250)
+                adopt(page, session)
+                receipt["token_age_at_http_post_ms"] = round(
+                    (time.monotonic() - captured.captured_at) * 1000)
+                target = page.url if trusted_sso(page.url) else captured.url
+                response = SimpleNamespace(status_code=200, url=target,
+                                           text=page.content(), headers={})
+                receipt["captcha_http_status"] = response.status_code
+                page = password_page(session, response, diagnostics=receipt)
+                receipt["captcha_http_accepted_password_form"] = True
+            else:
+                # A minted token can precede the callback POST; pump browser events first.
+                page.wait_for_selector(HANDOFF_SELECTOR, timeout=15000)
+                if captured.captured_at is None:
+                    raise AuthError("captcha_token_not_captured")
+                receipt["token_captured_before_browser_send"] = True
+                adopt(page, session)
+                receipt["token_age_at_http_post_ms"] = round((time.monotonic() - captured.captured_at) * 1000)
+                phase("http_consume_captcha")
+                receipt["http_captcha_posts"] = 1
+                response = (consume_with_curl(captured, session) if transport == "curl"
+                            else captured.consume(session))
+                receipt["captcha_http_status"] = response.status_code
+                page = password_page(session, response, diagnostics=receipt)
+                receipt["captcha_http_accepted_password_form"] = True
             scope = parse_qs(urlsplit(browser_login.AUTHZ).query)['scope'][0]
             auth = GovBrAuth(session, NullCaptcha(), client_id=CLIENT, redirect_uri=PORTAL,
                              scope=scope, diagnostics=receipt)

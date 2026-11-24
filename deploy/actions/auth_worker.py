@@ -2,6 +2,7 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+import os
 import sys
 
 sys.path.insert(0, '/app/experiments/gha-webkit')
@@ -39,11 +40,21 @@ def main():
 
 
 if __name__ == '__main__':
+    probe = None
     try:
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        if os.environ.get('INSS_DIAG_DIR'):
+            sys.path.insert(0, '/diag-deps')
+            import captcha_probe
+            probe = captcha_probe.install(os.environ['INSS_DIAG_DIR'])
             payload = main()
+        else:
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                payload = main()
     except Exception as error:
         payload = {'validation': {'success': False, 'code': 'auth_worker_failed',
                                   'error_type': type(error).__name__}, 'client_data': {}}
+    finally:
+        if probe is not None:
+            probe.flush()
     print(json.dumps(payload), flush=True)
     raise SystemExit(0 if payload['validation']['success'] else 3)

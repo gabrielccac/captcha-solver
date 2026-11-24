@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import urlsplit
-from urllib.request import build_opener, HTTPRedirectHandler, Request
+from urllib.request import build_opener, HTTPRedirectHandler, Request, urlopen
 
 IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62e6266bad61e67eaa62eb2ca6f69493b1801d9077e2e2b117693c61c28d5571'
 SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
@@ -126,6 +126,23 @@ def summary(payload):
     return result
 
 
+def environment(directory, mode):
+    """Record the runner's egress identity and the diagnostic inputs beside the captures."""
+    record = {'mode': mode, 'attempts': os.environ.get('INSS_DIAG_ATTEMPTS', '1'),
+              'run_id': os.environ.get('GITHUB_RUN_ID'), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
+              'sha': os.environ.get('GITHUB_SHA'), 'ip': None, 'org': None, 'asn': None,
+              'city': None, 'region': None, 'country': None}
+    try:
+        request = Request('https://ipinfo.io/json', headers={'Accept': 'application/json',
+                                                            'User-Agent': 'captcha-solver-diag/1.0'})
+        with urlopen(request, timeout=10) as response:
+            record.update({key: value for key, value in json.loads(response.read(4096)).items()
+                           if key in record})
+    except Exception as error:
+        record['egress_error'] = type(error).__name__
+    (directory / 'run.json').write_text(json.dumps(record), encoding='utf-8')
+
+
 def main():
     values = {}
     token = os.environ.pop('GHCR_TOKEN')
@@ -135,9 +152,16 @@ def main():
     request_id = os.environ.pop('INSS_REQUEST_ID', '')
     previous_config = os.environ.get('DOCKER_CONFIG')
     name, process, timer = 'inss-private-query', None, None
+    worker_log, log_file = subprocess.DEVNULL, None
     result = {'success': False, 'code': 'query_launch_failed', 'encrypted_result': False}
     output = Path('encrypted-query')
     output.mkdir(exist_ok=False)
+    diagnostic = os.environ.pop('INSS_DIAG', '')
+    diag = None
+    if diagnostic:
+        diag = Path('captcha-diag')
+        diag.mkdir(exist_ok=False)
+        environment(diag, (os.environ.get('INSS_DIAG_MODE') or 'replay').strip())
     started = time.monotonic()
     callback_url, sealed_result = '', None
     try:
@@ -173,11 +197,24 @@ def main():
             mounts = {SOURCE_ROOT / 'src': '/app/src'}
             mounts[RUNNER_DIR / 'smoke.py'] = '/app/experiments/gha-webkit/smoke.py'
             mounts[RUNNER_DIR / 'auth_worker.py'] = '/auth_worker.py'
+            if diag is not None:
+                mounts[RUNNER_DIR / 'captcha_probe.py'] = '/captcha_probe.py'
             for source, target in mounts.items():
                 command += ['--mount', f'type=bind,src={source},dst={target},readonly']
+            worker_log = subprocess.DEVNULL
+            if diag is not None:
+                command += ['--mount', f'type=bind,src={diag.resolve()},dst=/diag',
+                            '--env', 'INSS_DIAG_DIR=/diag',
+                            '--env', 'INSS_TRANSPORT=' + (os.environ.get('INSS_DIAG_MODE') or 'replay').strip(),
+                            '--env', 'INSS_MAX_ATTEMPTS=' + (os.environ.get('INSS_DIAG_ATTEMPTS') or '1').strip()]
+                dependencies = Path('diag-deps')
+                if dependencies.is_dir():
+                    command += ['--mount', f'type=bind,src={dependencies.resolve()},dst=/diag-deps,readonly']
+                log_file = (diag / 'worker.log').open('wb')
+                worker_log = log_file
             command += ['--entrypoint', 'python', IMAGE, '-u', '/auth_worker.py']
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                       stderr=subprocess.DEVNULL)
+                                       stderr=worker_log)
             limit = 240
             timer = threading.Timer(limit, lambda: subprocess.run(['docker', 'rm', '-f', name],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
@@ -233,6 +270,8 @@ def main():
         if timer:
             timer.cancel()
         subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if log_file is not None:
+            log_file.close()
         if previous_config is None:
             os.environ.pop('DOCKER_CONFIG', None)
         else:
