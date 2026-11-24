@@ -115,10 +115,29 @@ class NoDisplayTests(unittest.TestCase):
     def test_missing_chrome_reports_a_clear_error(self):
         with (
             patch.dict(os.environ, {}, clear=True),
+            patch("captcha.browser._registry_chrome", return_value=None),
             patch("captcha.browser.os.path.isfile", return_value=False),
         ):
             with self.assertRaisesRegex(RuntimeError, "CHROME_BIN"):
                 chrome_binary()
+
+    def test_registry_install_is_used_when_the_environment_is_filtered(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("captcha.browser._registry_chrome",
+                  return_value=r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        ):
+            self.assertTrue(chrome_binary().endswith("chrome.exe"))
+
+    def test_known_windows_path_works_without_programfiles_in_the_environment(self):
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("captcha.browser._platform", return_value="nt"),
+            patch("captcha.browser._registry_chrome", return_value=None),
+            patch("captcha.browser.os.path.isfile",
+                  side_effect=lambda path: path == r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        ):
+            self.assertEqual(chrome_binary(), r"C:\Program Files\Google\Chrome\Application\chrome.exe")
 
 
 def test_dynamic_display_waits_for_socket_not_fixed_delay(monkeypatch):
