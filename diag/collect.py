@@ -5,7 +5,9 @@ Reads only artifacts produced by .github/workflows/diag-captcha.yml.
 """
 import argparse
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -25,9 +27,12 @@ def artifacts(run_id):
 
 
 def download(run_id, name, target):
-    if (target / name).is_dir():
+    """Extract one artifact into a private staging directory; never share state between collectors."""
+    final = target / name
+    if any((final / marker).exists() for marker in ('run.json', 'observations.json', 'receipt.json')):
         return
-    gh('run', 'download', str(run_id), '-R', REPO, '-n', name, '-D', str(target / name))
+    shutil.rmtree(final, ignore_errors=True)
+    gh('run', 'download', str(run_id), '-R', REPO, '-n', name, '-D', str(final))
 
 
 def read(path):
@@ -37,17 +42,17 @@ def read(path):
         return None
 
 
-def summarize(wave, folder):
-    observations = read(folder / 'captcha-diag' / 'observations.json') or {}
-    run = read(folder / 'captcha-diag' / 'run.json') or {}
-    receipt = read(folder / 'encrypted-query' / 'receipt.json') or {}
+def summarize(wave, folder, receipt_folder):
+    observations = read(folder / 'observations.json') or {}
+    run = read(folder / 'run.json') or {}
+    receipt = read(receipt_folder / 'receipt.json') or {}
     attempts = observations.get('attempts') or []
     rounds = [record for attempt in attempts for record in attempt.get('rounds') or []]
     confirmations = observations.get('selection_confirmations') or []
     handoff = observations.get('handoff') or []
     pages = observations.get('pages') or []
     model_calls = observations.get('model_calls') or []
-    worker_log = folder / 'captcha-diag' / 'worker.log'
+    worker_log = folder / 'worker.log'
     return {
         'wave': wave,
         'run_id': run.get('run_id'),
@@ -77,6 +82,7 @@ def summarize(wave, folder):
                        for page in pages],
         'worker_log_bytes': worker_log.stat().st_size if worker_log.exists() else 0,
         'artifact': str(folder),
+        'receipt': str(receipt_folder),
     }
 
 
@@ -90,20 +96,34 @@ def main():
     target = Path(args.out or Path.home() / '.capy/work/ripple' / args.wave)
     target.mkdir(parents=True, exist_ok=True)
     listing = json.loads(gh('api', f'repos/{REPO}/actions/runs?branch={args.branch}&per_page={args.limit}'))
+    work = target / f'.work-{os.getpid()}'
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
     rows = []
-    for run in listing.get('workflow_runs', []):
-        names = [name for name in artifacts(run['id'])
-                 if name.startswith(f'diag-{args.wave}-') or name.startswith(f'receipt-{args.wave}-')]
-        if not names:
-            continue
-        for name in names:
-            download(run['id'], name, target)
-        folder = target / names[0]
-        rows.append(summarize(args.wave, folder))
+    try:
+        for run in listing.get('workflow_runs', []):
+            groups = {}
+            for name in artifacts(run['id']):
+                for prefix in ('diag', 'receipt'):
+                    head = f'{prefix}-{args.wave}-'
+                    if name.startswith(head):
+                        groups.setdefault(name[len(head):], {})[prefix] = name
+            for suffix, group in sorted(groups.items()):
+                for name in group.values():
+                    download(run['id'], name, work)
+                diag = next((name for name in group.values() if name.startswith('diag-')), None)
+                receipt = next((name for name in group.values() if name.startswith('receipt-')), None)
+                if not (diag and receipt):
+                    continue
+                rows.append(summarize(args.wave, work / diag, work / receipt))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
     (target / 'summary.json').write_text(json.dumps(rows, indent=1), encoding='utf-8')
-    print(f'{len(rows)} runs\t{target / "summary.json"}')
+    print(f'{len(rows)} runs	{target / "summary.json"}')
     for row in rows:
-        print(f"{row['mode']:7s} {row['code'] or '-':22s} stage={row['stage']} ip={row['ip']} org={(row['org'] or '-')[:28]}")
+        print(f"{str(row['mode']):7s} {str(row['code'] or '-'):26s} ip={str(row['ip']):16s} "
+              f"org={str(row['org'] or '-')[:30]}")
+    return 0
 
 
 if __name__ == '__main__':
