@@ -54,7 +54,7 @@ def login_session(monkeypatch, token=None, **identity):
     session.send = server.send
     token = app_token() if token is None else token
     monkeypatch.setattr(dataprev_login, "browser_leg",
-                        lambda cpf, password, api_key, receipt, phase, cdp_url="": token)
+                        lambda cpf, password, api_key, receipt, phase, cdp_url="", headless=False: token)
     return session, server
 
 

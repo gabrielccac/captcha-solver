@@ -17,7 +17,8 @@ def run_flow(monkeypatch, tmp_path, extra=(), document="comprovante", login=None
     receipt_path = tmp_path / "receipt.json"
     seen = {}
 
-    def stub_login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None):
+    def stub_login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None,
+                   headless=False):
         receipt.update(phase_events=[], success=False)
         progress("browser_start")
         receipt["phase_events"].append({"phase": "browser_start", "elapsed_ms": 4000})
@@ -86,7 +87,8 @@ def test_log_jsonl_nao_grava_credenciais(monkeypatch, tmp_path, capsys):
 def test_retry_insiste_quando_a_falha_e_passageira(monkeypatch, tmp_path, capsys):
     chamadas = []
 
-    def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None):
+    def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None,
+              headless=False):
         chamadas.append(1)
         receipt.update(phase_events=[], success=False)
         if len(chamadas) == 1:
@@ -109,7 +111,8 @@ def test_retry_insiste_quando_a_falha_e_passageira(monkeypatch, tmp_path, capsys
 def test_retry_nao_insiste_em_erro_de_credencial(monkeypatch, tmp_path, capsys):
     chamadas = []
 
-    def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None):
+    def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None,
+              headless=False):
         chamadas.append(1)
         receipt.update(phase_events=[], success=False)
         raise AuthError("invalid_credentials")

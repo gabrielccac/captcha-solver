@@ -125,7 +125,7 @@ def browser_source_label():
     return "xvfb_chrome" if _x11_display() else "chrome_display"
 
 
-def browser_leg(cpf, password, api_key, receipt, phase, cdp_url=""):
+def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=False):
     """Gateway, CPF, hCaptcha, senha no próprio formulário e captura do token."""
     with ExitStack() as resources:
         playwright = resources.enter_context(sync_playwright())
@@ -133,9 +133,9 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url=""):
             receipt["browser_source"] = "external_cdp"
             browser = playwright.chromium.connect_over_cdp(cdp_url)
         else:
-            receipt["browser_source"] = browser_source_label()
+            receipt["browser_source"] = browser_source_label() + ("_headless" if headless else "")
             profile = resources.enter_context(TemporaryDirectory(prefix="dataprev-govbr-"))
-            manager = ManagedBrowser(profile, quiet=True)
+            manager = ManagedBrowser(profile, quiet=True, headless=headless)
             resources.callback(manager.stop)
             browser = playwright.chromium.connect_over_cdp(manager.start(wait_ready=True))
             receipt["cdp_port"] = manager.cdp_port
@@ -226,7 +226,8 @@ def verify_token(session, token, cpf, receipt) -> None:
         raise AuthError("identity_mismatch")
 
 
-def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None):
+def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None,
+          headless=False):
     """Autentica a `requests.Session` do chamador no cadunico.dataprev.gov.br.
 
     Um login por chamada. Ao final a sessão carrega ``Authorization: Bearer`` com o
@@ -258,7 +259,8 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress
             raise AuthError("fresh_http_session_required")
         prepare(session)
         phase("browser_start")
-        token = browser_leg(cpf, password, api_key, receipt, phase, cdp_url)
+        token = browser_leg(cpf, password, api_key, receipt, phase, cdp_url,
+                            headless=headless)
         phase("identity")
         verify_token(session, token, cpf, receipt)
         receipt.update(success=True, code="ok")

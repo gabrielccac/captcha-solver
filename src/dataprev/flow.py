@@ -68,7 +68,7 @@ def _tentativa(args, cpf, password, api_key, out, receipt, auth_receipt, registr
     try:
         try:
             login(session, cpf, password, api_key, receipt=auth_receipt,
-                  cdp_url=args.cdp_url or "", progress=em_curso)
+                  cdp_url=args.cdp_url or "", progress=em_curso, headless=args.headless)
         except AuthError as error:
             registrar("credenciamento_falhou", code=error.code, http_status=error.http_status)
             auth_receipt.pop("phase_now", None)
@@ -99,6 +99,8 @@ def main():
     ap.add_argument("--credentials-stdin", action="store_true",
                     help="Lê {cpf, password, api_key} da entrada padrão, sem variável de ambiente")
     ap.add_argument("--cdp-url", help="Chrome ja aberto com --remote-debugging-port")
+    ap.add_argument("--headless", action="store_true",
+                    help="Chrome headless em vez de janela, para contêiner e comparação")
     ap.add_argument("--retry", type=int, default=0,
                     help="tentativas extras quando a falha é passageira (portal, captcha, browser)")
     ap.add_argument("--retry-wait", type=int, default=30,

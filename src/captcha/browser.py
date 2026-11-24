@@ -96,7 +96,7 @@ def _port_open(port):
 
 class ManagedBrowser:
     def __init__(self, profile_dir, cdp_port=None, display=None, lang="pt-BR",
-                 window="1280,900", chrome_bin=None, quiet=False):
+                 window="1280,900", chrome_bin=None, quiet=False, headless=False):
         self.profile_dir = profile_dir
         self.cdp_port = cdp_port
         self.display = display or _free_display()
@@ -105,6 +105,7 @@ class ManagedBrowser:
         self.chrome_bin = chrome_bin
         self.procs = []
         self.quiet = quiet
+        self.headless = headless
 
     def _wait_display(self, process, timeout=5):
         deadline = time.monotonic() + timeout
@@ -145,6 +146,8 @@ class ManagedBrowser:
                 self.stop()
                 raise RuntimeError("Xvfb exited during startup")
         command = [self.chrome_bin or chrome_binary(), f"--user-data-dir={self.profile_dir}"]
+        if self.headless:
+            command.append("--headless=new")
         if virtual:
             command.append("--ozone-platform=x11")
         command += [f"--remote-debugging-port={self.cdp_port}",
