@@ -178,6 +178,13 @@ def test_wait_timeout_records_the_localstorage_keys_when_the_fragment_is_empty(m
     assert receipt["final_storage_keys"] == ["session", "token", "usuario"]
 
 
+def test_browser_source_names_the_real_display(monkeypatch):
+    monkeypatch.setattr(dataprev_login, "_x11_display", lambda: True)
+    assert dataprev_login.browser_source_label() == "xvfb_chrome"
+    monkeypatch.setattr(dataprev_login, "_x11_display", lambda: False)
+    assert dataprev_login.browser_source_label() == "chrome_display"
+
+
 def test_login_reports_phase_progress_as_it_happens(monkeypatch):
     session, server = login_session(monkeypatch)
     seen = []

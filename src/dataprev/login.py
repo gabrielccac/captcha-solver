@@ -18,7 +18,7 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from auth.govbr import AuthError, fragment_param
 from captcha import hcaptcha
-from captcha.browser import ManagedBrowser
+from captcha.browser import ManagedBrowser, _x11 as _x11_display
 from inss.http_errors import observe, request_failure
 from inss.session import login_failure, submit_cpf, submit_password
 from .client import DataprevClient, ServiceError, claims, prepare
@@ -120,6 +120,11 @@ def wait_outcome(page, receipt, timeout=WAIT_SECONDS):
     return "unknown", ""
 
 
+def browser_source_label():
+    """De onde vem o display: Xvfb no Linux, a tela do próprio usuário no resto."""
+    return "xvfb_chrome" if _x11_display() else "chrome_display"
+
+
 def browser_leg(cpf, password, api_key, receipt, phase, cdp_url=""):
     """Gateway, CPF, hCaptcha, senha no próprio formulário e captura do token."""
     with ExitStack() as resources:
@@ -128,7 +133,7 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url=""):
             receipt["browser_source"] = "external_cdp"
             browser = playwright.chromium.connect_over_cdp(cdp_url)
         else:
-            receipt["browser_source"] = "xvfb_chrome"
+            receipt["browser_source"] = browser_source_label()
             profile = resources.enter_context(TemporaryDirectory(prefix="dataprev-govbr-"))
             manager = ManagedBrowser(profile, quiet=True)
             resources.callback(manager.stop)
