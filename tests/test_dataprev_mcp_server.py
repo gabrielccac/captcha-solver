@@ -61,9 +61,11 @@ class CadunicoMCPTests(unittest.TestCase):
             return fake_flow()(command, **kwargs)
 
         with tempfile.TemporaryDirectory() as root, \
+             patch("dataprev.mcp_server.ENV_FILE", str(Path(root) / "ausente.env")), \
              patch("dataprev.mcp_server.DOCUMENTS_DIR", Path(root)), \
              patch("dataprev.mcp_server.subprocess.run", side_effect=run):
             get_cadunico_documents("123.456.789-01", "segredo-da-senha", "sk-or-secreta")
+        self.assertNotIn("--env-file", seen["command"])
         self.assertNotIn("segredo-da-senha", " ".join(seen["command"]))
         self.assertNotIn("sk-or-secreta", " ".join(seen["command"]))
         self.assertNotIn("12345678901", " ".join(seen["command"]))
@@ -71,6 +73,26 @@ class CadunicoMCPTests(unittest.TestCase):
                          {"cpf": "12345678901", "password": "segredo-da-senha",
                           "api_key": "sk-or-secreta"})
         self.assertEqual(seen["command"][seen["command"].index("--document") + 1], "all")
+
+    def test_local_env_file_fills_empty_credentials(self):
+        seen = {}
+
+        def run(command, **kwargs):
+            seen["command"] = command
+            seen["input"] = kwargs["input"]
+            return fake_flow()(command, **kwargs)
+
+        with tempfile.TemporaryDirectory() as root:
+            env_file = Path(root) / ".env"
+            env_file.write_text("GOVBR_PASSWORD=guardada\n", encoding="utf-8")
+            with patch("dataprev.mcp_server.ENV_FILE", str(env_file)), \
+                 patch("dataprev.mcp_server.DOCUMENTS_DIR", self.documents_dir()), \
+                 patch("dataprev.mcp_server.subprocess.run", side_effect=run):
+                result = get_cadunico_documents("12345678901", "")
+        self.assertEqual(seen["command"][seen["command"].index("--env-file") + 1], str(env_file))
+        self.assertEqual(json.loads(seen["input"]),
+                         {"cpf": "12345678901", "password": "", "api_key": ""})
+        self.assertEqual(result["cpf_mask"], "123.***.***-01")
 
     def test_success_persists_private_pdfs_and_masks_the_cpf(self):
         with patch("dataprev.mcp_server.DOCUMENTS_DIR", self.documents_dir()), \
