@@ -1,39 +1,48 @@
 name: Captcha diagnostic lab
-run-name: diag ${{ inputs.mode }} #${{ inputs.index }} ${{ inputs.tag }}
+run-name: diag wave ${{ github.event.head_commit.message }}
 on:
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: Transport under test (replay, native, curl)
-        required: true
-        default: replay
-        type: choice
-        options: [replay, native, curl]
-      index:
-        description: Identificador da execução dentro do lote
-        required: true
-        type: string
-      tag:
-        description: Rótulo do lote para agrupar artefatos
-        required: false
-        default: wave1
-        type: string
-      attempts:
-        description: Tentativas por execução (1 mede o transporte)
-        required: false
-        default: '1'
-        type: string
+  push:
+    branches: [diag/captcha-run-lab]
+    paths: [diag/plan.json]
 permissions:
   contents: read
   packages: read
-concurrency:
-  group: diag-${{ inputs.tag }}-${{ inputs.mode }}-${{ inputs.index }}
-  cancel-in-progress: false
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+      max_parallel: ${{ steps.build.outputs.max_parallel }}
+      attempts: ${{ steps.build.outputs.attempts }}
+      wave: ${{ steps.build.outputs.wave }}
+    steps:
+      - name: Expand the wave into one job per run
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/contents/diag/plan.json?ref=$GITHUB_SHA" \
+            -H 'Accept: application/vnd.github.raw' > plan.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          plan = json.load(open('plan.json', encoding='utf-8'))
+          runs = [{'mode': entry['mode'], 'index': str(number)}
+                  for entry in plan['runs'] for number in range(1, int(entry['count']) + 1)]
+          print('matrix=' + json.dumps({'include': runs}))
+          print('max_parallel=' + str(plan.get('max_parallel', 3)))
+          print('attempts=' + str(plan.get('attempts', 1)))
+          print('wave=' + str(plan['wave']))
+          PY
   diag:
+    needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     environment: n8n-inss-query
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(needs.plan.outputs.max_parallel) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - name: Prepare optional browser-like HTTP transport
         continue-on-error: true
@@ -42,8 +51,8 @@ jobs:
         env:
           GHCR_TOKEN: ${{ github.token }}
           INSS_DIAG: '1'
-          INSS_DIAG_MODE: ${{ inputs.mode }}
-          INSS_DIAG_ATTEMPTS: ${{ inputs.attempts }}
+          INSS_DIAG_MODE: ${{ matrix.mode }}
+          INSS_DIAG_ATTEMPTS: ${{ needs.plan.outputs.attempts }}
           GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
           GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
           OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}
@@ -59,7 +68,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
-          name: captcha-diag-${{ inputs.mode }}-${{ inputs.index }}
+          name: diag-${{ needs.plan.outputs.wave }}-${{ matrix.mode }}-${{ matrix.index }}
           path: captcha-diag/
           retention-days: 3
           if-no-files-found: warn
@@ -67,7 +76,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
-          name: captcha-receipt-${{ inputs.mode }}-${{ inputs.index }}
+          name: receipt-${{ needs.plan.outputs.wave }}-${{ matrix.mode }}-${{ matrix.index }}
           path: encrypted-query/
           retention-days: 3
           if-no-files-found: warn
