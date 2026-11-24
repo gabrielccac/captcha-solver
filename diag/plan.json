@@ -1,9 +1,6 @@
 {
- "wave": "w2",
- "max_parallel": 3,
+ "wave": "w3",
+ "max_parallel": 2,
  "attempts": 1,
- "runs": [
-  {"mode": "replay", "count": 15},
-  {"mode": "replay", "count": 6, "query": 1}
- ]
+ "runs": [{"mode": "replay", "count": 4}]
 }
