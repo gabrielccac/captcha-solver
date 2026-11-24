@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import requests
@@ -43,6 +44,9 @@ def main():
     ap.add_argument("--credentials-stdin", action="store_true",
                     help="Lê {cpf, password, api_key} da entrada padrão, sem variável de ambiente")
     ap.add_argument("--cdp-url", help="Chrome ja aberto com --remote-debugging-port")
+    ap.add_argument("--log-format", choices=("texto", "jsonl"), default="texto",
+                    help="texto: uma linha por passo; jsonl: um evento JSON por linha, "
+                         "também gravado em events.jsonl na saída")
     args = ap.parse_args()
     os.umask(0o077)
     values = load_env_file(args.env_file) if args.env_file else dict(os.environ)
@@ -61,8 +65,33 @@ def main():
     auth_receipt = {}
     session = requests.Session()
 
+    run_id = uuid.uuid4().hex[:12]
+    events_path = out / "events.jsonl"
+
+    def registrar(event, **fields):
+        """Um evento por linha: texto para gente, JSONL para quem lê por programa."""
+        moment = time.time()
+        if args.log_format == "jsonl":
+            linha = json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(moment))
+                                       + f".{int(moment % 1 * 1000):03d}Z",
+                                "t": round(moment - started, 3), "run_id": run_id,
+                                "event": event, **fields}, ensure_ascii=False)
+            print(linha, file=sys.stderr, flush=True)
+        else:
+            detalhe = " ".join(f"{key}={value}" for key, value in fields.items())
+            print(f"[{time.strftime('%H:%M:%S', time.localtime(moment))}] {event}"
+                  + (f" {detalhe}" if detalhe else ""), file=sys.stderr, flush=True)
+        try:
+            with events_path.open("a", encoding="utf-8") as archive:
+                archive.write(json.dumps({"ts": moment, "run_id": run_id, "event": event,
+                                          **fields}, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
     def credenciamento_em_curso(phase_name):
         """Escreve o recibo durante o login, para acompanhar sem esperar o fim."""
+        decorrido = (auth_receipt.get("phase_events") or [{}])[-1].get("elapsed_ms", 0)
+        registrar("credenciamento", phase=phase_name, elapsed_ms=decorrido)
         auth_receipt["phase_now"] = phase_name
         try:
             (out / "receipt.json").write_text(json.dumps(
@@ -72,27 +101,34 @@ def main():
         except OSError:
             pass
 
+    registrar("inicio", documento=args.document, saida=str(out))
     try:
         try:
             login(session, cpf, password, api_key, receipt=auth_receipt,
                   cdp_url=args.cdp_url or "", progress=credenciamento_em_curso)
         except AuthError as error:
+            registrar("credenciamento_falhou", code=error.code, http_status=error.http_status)
             auth_receipt.pop("phase_now", None)
             receipt.update(code=error.code, http_status=error.http_status, stage="credenciamento",
                            credenciamento=auth_receipt)
             raise
         auth_receipt.pop("phase_now", None)
         receipt["credenciamento"] = auth_receipt
+        registrar("credenciamento_ok", elapsed_ms=auth_receipt.get("elapsed_ms", 0))
         token = session.headers["Authorization"].removeprefix("Bearer ")
-        receipt.update(collect(DataprevClient(token), out, args.document))
+        receipt.update(collect(DataprevClient(token), out, args.document,
+                               progress=registrar))
         receipt["credenciamento"] = auth_receipt
     except AuthError:
         receipt["success"] = False
     except ServiceError as error:
+        registrar("documento_falhou", code=error.code, http_status=error.status)
         receipt.update(code=error.code, http_status=error.status, success=False)
     finally:
         session.close()
     receipt["total_ms"] = round((time.monotonic() - started) * 1000)
+    registrar("fim", success=receipt["success"], code=receipt.get("code"),
+              total_ms=receipt["total_ms"], documentos=list(receipt.get("documents", {})))
     (out / "receipt.json").write_text(json.dumps(receipt, indent=1, ensure_ascii=False), encoding="utf-8")
     print(json.dumps({"success": receipt["success"], "code": receipt.get("code"),
                       "documents": list(receipt.get("documents", {})),
