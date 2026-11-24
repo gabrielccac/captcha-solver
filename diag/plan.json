@@ -1,6 +1,10 @@
 {
- "wave": "smoke3",
- "max_parallel": 1,
+ "wave": "w1",
+ "max_parallel": 3,
  "attempts": 1,
- "runs": [{"mode": "replay", "count": 1}]
+ "runs": [
+  {"mode": "replay", "count": 12},
+  {"mode": "native", "count": 12},
+  {"mode": "curl", "count": 6}
+ ]
 }
