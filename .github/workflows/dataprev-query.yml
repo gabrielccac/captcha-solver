@@ -3,6 +3,9 @@ name: CadÚnico - comprovante e consulta
 run-name: CadUnico ${{ inputs.request_id }}
 
 on:
+  push:
+    paths:
+      - '.github/workflows/dataprev-query.yml'
   workflow_dispatch:
     inputs:
       request_id:
