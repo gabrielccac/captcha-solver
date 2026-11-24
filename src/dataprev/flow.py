@@ -127,7 +127,9 @@ def main():
     finally:
         session.close()
     receipt["total_ms"] = round((time.monotonic() - started) * 1000)
-    registrar("fim", success=receipt["success"], code=receipt.get("code"),
+    documento_erro = (receipt.get("errors") or [{}])[0].get("code")
+    registrar("fim", success=receipt["success"],
+              code=receipt.get("code") or documento_erro,
               total_ms=receipt["total_ms"], documentos=list(receipt.get("documents", {})))
     (out / "receipt.json").write_text(json.dumps(receipt, indent=1, ensure_ascii=False), encoding="utf-8")
     print(json.dumps({"success": receipt["success"], "code": receipt.get("code"),

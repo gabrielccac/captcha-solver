@@ -21,6 +21,7 @@ def main():
     parser.add_argument("--document", choices=("comprovante", "consulta", "all"), default="all")
     parser.add_argument("--image", default="captcha-dataprev:local")
     parser.add_argument("--rebuild", action="store_true", help="Reconstrói a imagem antes de rodar")
+    parser.add_argument("--log-format", choices=("texto", "jsonl"), default="texto")
     args = parser.parse_args()
 
     values = {}
@@ -59,7 +60,8 @@ def main():
         "--mount", f"type=bind,src={runs},dst=/app/runs",
         "--entrypoint", "python", args.image,
         "-m", "dataprev.flow", "--credentials-stdin",
-        "--out", str(Path("runs") / destino.relative_to(runs)), "--document", args.document,
+        "--out", (Path("runs") / destino.relative_to(runs)).as_posix(),
+        "--document", args.document, "--log-format", args.log_format,
     ]
     try:
         return subprocess.run(comando, input=segredo, text=True, cwd=root).returncode
