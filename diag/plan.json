@@ -1,5 +1,5 @@
 {
- "wave": "w3",
+ "wave": "w4",
  "max_parallel": 2,
  "attempts": 1,
  "runs": [{"mode": "replay", "count": 4}]

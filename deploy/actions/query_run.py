@@ -116,7 +116,7 @@ def summary(payload):
             result[key] = receipt[key]
     if 'auth_retry' in validation:
         result['auth_retry'] = validation['auth_retry']
-    for key in ('credential_status', 'next_action', 'retryable'):
+    for key in ('credential_status', 'next_action', 'retryable', 'cpu_seconds', 'memory_peak_mib'):
         if key in validation:
             result[key] = validation[key]
     if validation.get('code') == 'captcha_selection_not_confirmed' and receipt.get('selection_waits'):
