@@ -65,6 +65,7 @@ def test_log_jsonl_entrega_um_evento_por_linha_e_arquiva(monkeypatch, tmp_path, 
     for evento in eventos:
         assert {"ts", "t", "run_id", "event"} <= set(evento)
         assert evento["ts"].endswith("Z") and "T" in evento["ts"]
+        assert 0 <= evento["t"] < 600, "t é tempo desde o início, não o relógio da máquina"
     assert eventos[0]["run_id"] == eventos[-1]["run_id"]
     assert eventos[-1]["code"] == "token_not_captured"
 

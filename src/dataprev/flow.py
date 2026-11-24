@@ -71,20 +71,19 @@ def main():
     def registrar(event, **fields):
         """Um evento por linha: texto para gente, JSONL para quem lê por programa."""
         moment = time.time()
+        registro = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(moment))
+                          + f".{int(moment % 1 * 1000):03d}Z",
+                    "t": round(time.monotonic() - started, 3), "run_id": run_id,
+                    "event": event, **fields}
         if args.log_format == "jsonl":
-            linha = json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(moment))
-                                       + f".{int(moment % 1 * 1000):03d}Z",
-                                "t": round(moment - started, 3), "run_id": run_id,
-                                "event": event, **fields}, ensure_ascii=False)
-            print(linha, file=sys.stderr, flush=True)
+            print(json.dumps(registro, ensure_ascii=False), file=sys.stderr, flush=True)
         else:
             detalhe = " ".join(f"{key}={value}" for key, value in fields.items())
             print(f"[{time.strftime('%H:%M:%S', time.localtime(moment))}] {event}"
                   + (f" {detalhe}" if detalhe else ""), file=sys.stderr, flush=True)
         try:
             with events_path.open("a", encoding="utf-8") as archive:
-                archive.write(json.dumps({"ts": moment, "run_id": run_id, "event": event,
-                                          **fields}, ensure_ascii=False) + "\n")
+                archive.write(json.dumps(registro, ensure_ascii=False) + "\n")
         except OSError:
             pass
 
