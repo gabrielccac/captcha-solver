@@ -5,6 +5,7 @@ original implementation and records what it returned. Challenge crops are writte
 to the diagnostic directory so a reviewer can verify the marks independently.
 """
 import json
+import os
 from pathlib import Path
 import time
 from urllib.parse import parse_qs
@@ -82,6 +83,9 @@ class Probe:
             interactions = kwargs.get("interactions")
             if interactions is not None and interactions.metrics:
                 record["selection"] = interactions.metrics[-1]
+            opinion = probe.second_opinion(folder, rnd, info, original_solve, kwargs.get("api_key"))
+            if opinion is not None:
+                record["second_opinion"] = opinion
             probe.attempt_record().setdefault("rounds", []).append(record)
             probe.flush()
             return done, info
@@ -198,6 +202,27 @@ class Probe:
         # Worker logs stay visible in diagnostic runs instead of being discarded.
         http_login.redirect_stderr = _passthrough
         return self
+
+    def second_opinion(self, folder, rnd, info, solve, api_key):
+        """Re-solve the same crops with an independent model so accuracy is measurable."""
+        model = os.environ.get("INSS_DIAG_SECOND_MODEL", "").strip()
+        if not model:
+            return None
+        try:
+            from PIL import Image
+            header = Image.open(folder / f"r{rnd}-text.png").convert("RGB")
+            tiles = [Image.open(folder / f"r{rnd}-tile{index}.png").convert("RGB")
+                     for index in range(1, 10)]
+            reference = folder / f"r{rnd}-ref.png"
+            reference = Image.open(reference).convert("RGB") if reference.exists() else None
+            started = time.monotonic()
+            usage = {}
+            picks = solve(header, tiles, model, ref_img=reference, api_key=api_key, usage=usage)
+            return {"model": model, "picks": list(picks),
+                    "elapsed_ms": round((time.monotonic() - started) * 1000),
+                    "usage_cost": (usage or {}).get("cost")}
+        except Exception as error:
+            return {"model": model, "error": f"{type(error).__name__}: {str(error)[:160]}"}
 
     def _after_frame(self, page, clip, confirmed, backend):
         record = {"attempt": self.attempt, "backend": backend, "confirmed": bool(confirmed),

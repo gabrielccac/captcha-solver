@@ -102,13 +102,12 @@ def consume_with_curl(captured, session, *, impersonate="safari17_0", timeout=30
     finally:
         captured.body = captured.url = None
         captured.headers.clear()
+        client.close()
     for cookie in getattr(getattr(response, "cookies", None), "jar", None) or []:
         session.cookies.set(cookie.name, cookie.value, domain=cookie.domain,
                             path=cookie.path or "/", secure=True)
-    result = SimpleNamespace(status_code=response.status_code, url=response.url or "",
-                             text=response.text, content=response.content, headers=response.headers)
-    client.close()
-    return result
+    return SimpleNamespace(status_code=response.status_code, url=response.url or "",
+                           text=response.text, content=response.content, headers=response.headers)
 
 
 def password_page(session, response, *, diagnostics=None):

@@ -20,7 +20,7 @@ from auth.captcha import NullCaptcha
 from auth.govbr import AuthError, GovBrAuth
 from auth.handoff import (CaptchaHandoff, HANDOFF_SELECTOR, SSO, consume_with_curl,
                           password_page, trusted_sso)
-from auth.page_diagnostics import is_upstream_rejection_page
+from auth.page_diagnostics import classify_page, is_upstream_rejection_page
 from captcha.browser import ManagedBrowser
 from captcha import hcaptcha
 from . import session as browser_login
@@ -313,8 +313,13 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
                 receipt["token_age_at_http_post_ms"] = round(
                     (time.monotonic() - captured.captured_at) * 1000)
                 target = page.url if trusted_sso(page.url) else captured.url
-                response = SimpleNamespace(status_code=200, url=target,
-                                           text=page.content(), headers={})
+                content = page.content()
+                if not page.query_selector('input[type="password"]'):
+                    # Keep "the browser never reached the password page" distinct from
+                    # a refused captcha: the token POST may have been blocked in flight.
+                    receipt["captcha_terminal"] = classify_page(content, target, '', status=200)
+                    raise AuthError("captcha_native_no_password_page", http_status=200)
+                response = SimpleNamespace(status_code=200, url=target, text=content, headers={})
                 receipt["captcha_http_status"] = response.status_code
                 page = password_page(session, response, diagnostics=receipt)
                 receipt["captcha_http_accepted_password_form"] = True
@@ -362,9 +367,11 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         raise AuthError(error.code) from None
     except requests.RequestException as error:
         raise AuthError(request_failure(error, receipt)) from None
-    except PlaywrightError:
+    except PlaywrightError as error:
+        receipt["runtime_error_type"] = type(error).__name__
         raise AuthError("browser_error") from None
-    except Exception:
+    except Exception as error:
+        receipt["runtime_error_type"] = type(error).__name__
         raise AuthError("login_runtime_error") from None
     finally:
         observer.__exit__(None, None, None)
