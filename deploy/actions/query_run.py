@@ -161,6 +161,8 @@ def main():
     if diagnostic:
         diag = Path('captcha-diag')
         diag.mkdir(exist_ok=False)
+        # The container runs as its own user; only this bind mount is writable.
+        diag.chmod(0o777)
         environment(diag, (os.environ.get('INSS_DIAG_MODE') or 'replay').strip())
     started = time.monotonic()
     callback_url, sealed_result = '', None
