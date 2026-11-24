@@ -76,6 +76,13 @@ def _free_display(start=97):
     return d
 
 
+def _free_port():
+    """Porta livre agora, para não disputar uma fixa entre execuções vizinhas."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 def _port_open(port):
     s = socket.socket()
     s.settimeout(1)
@@ -88,7 +95,7 @@ def _port_open(port):
 
 
 class ManagedBrowser:
-    def __init__(self, profile_dir, cdp_port=9223, display=None, lang="pt-BR",
+    def __init__(self, profile_dir, cdp_port=None, display=None, lang="pt-BR",
                  window="1280,900", chrome_bin=None, quiet=False):
         self.profile_dir = profile_dir
         self.cdp_port = cdp_port
@@ -114,6 +121,8 @@ class ManagedBrowser:
         raise RuntimeError("Xvfb not ready in time")
 
     def start(self, timeout=40, *, wait_ready=False):
+        if self.cdp_port is None:
+            self.cdp_port = _free_port()
         if _port_open(self.cdp_port):
             raise RuntimeError("CDP port already in use; choose another --cdp-port")
         os.makedirs(self.profile_dir, exist_ok=True)

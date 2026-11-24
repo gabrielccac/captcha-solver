@@ -112,6 +112,28 @@ class NoDisplayTests(unittest.TestCase):
         ):
             self.assertTrue(chrome_binary().endswith("chrome.exe"))
 
+    def test_each_run_takes_its_own_port_instead_of_a_fixed_one(self):
+        chrome = Mock()
+        with (
+            tempfile.TemporaryDirectory() as profile,
+            patch("captcha.browser._port_open", return_value=False),
+            patch("captcha.browser._x11", return_value=False),
+            patch("captcha.browser.chrome_binary", return_value="/opt/chrome"),
+            patch("captcha.browser._free_port", side_effect=[45123, 45124]),
+            patch("captcha.browser.subprocess.Popen", return_value=chrome) as spawn,
+            patch("captcha.browser.open", mock_open()),
+            patch("captcha.browser.urllib.request.urlopen"),
+        ):
+            primeiro = ManagedBrowser(profile)
+            primeiro.start()
+            primeiro.stop()
+            segundo = ManagedBrowser(profile)
+            segundo.start()
+            segundo.stop()
+        portas = [chamada[0][0][2] for chamada in spawn.call_args_list]
+        self.assertEqual(portas, ["--remote-debugging-port=45123", "--remote-debugging-port=45124"])
+        self.assertEqual((primeiro.cdp_port, segundo.cdp_port), (45123, 45124))
+
     def test_missing_chrome_reports_a_clear_error(self):
         with (
             patch.dict(os.environ, {}, clear=True),
