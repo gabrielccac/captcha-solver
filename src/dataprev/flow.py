@@ -36,6 +36,61 @@ def credentials(values):
     return cpf, values["GOVBR_PASSWORD"], values["OPENROUTER_API_KEY"]
 
 
+TRANSIENT_CODES = {
+    "token_not_captured", "captcha_not_accepted", "captcha_selection_not_confirmed",
+    "captcha_challenge_missing", "browser_error", "dataprev_login_runtime_error",
+    "upstream_empty_response", "upstream_invalid_json", "session_expired", "not_authorized",
+}
+
+
+def _tentativa(args, cpf, password, api_key, out, receipt, auth_receipt, registrar):
+    """Um credenciamento completo. Falha de portal volta no recibo, nunca como exceção."""
+    inicio = time.monotonic()
+    session = requests.Session()
+
+    def em_curso(phase_name):
+        decorrido = (auth_receipt.get("phase_events") or [{}])[-1].get("elapsed_ms", 0)
+        campos = {"phase": phase_name, "elapsed_ms": decorrido}
+        if phase_name == "browser_start":
+            campos.update(browser_version=auth_receipt.get("browser_version"),
+                          browser_source=auth_receipt.get("browser_source"),
+                          cdp_port=auth_receipt.get("cdp_port"))
+        registrar("credenciamento", **campos)
+        auth_receipt["phase_now"] = phase_name
+        try:
+            (out / "receipt.json").write_text(json.dumps(
+                {**receipt, "stage": "credenciamento", "success": False,
+                 "credenciamento": auth_receipt}, indent=1, ensure_ascii=False),
+                encoding="utf-8")
+        except OSError:
+            pass
+
+    try:
+        try:
+            login(session, cpf, password, api_key, receipt=auth_receipt,
+                  cdp_url=args.cdp_url or "", progress=em_curso)
+        except AuthError as error:
+            registrar("credenciamento_falhou", code=error.code, http_status=error.http_status)
+            auth_receipt.pop("phase_now", None)
+            receipt.update(code=error.code, http_status=error.http_status, stage="credenciamento",
+                           credenciamento=auth_receipt)
+            raise
+        auth_receipt.pop("phase_now", None)
+        receipt["credenciamento"] = auth_receipt
+        registrar("credenciamento_ok", elapsed_ms=auth_receipt.get("elapsed_ms", 0))
+        token = session.headers["Authorization"].removeprefix("Bearer ")
+        receipt.update(collect(DataprevClient(token), out, args.document, progress=registrar))
+        receipt["credenciamento"] = auth_receipt
+    except AuthError:
+        receipt["success"] = False
+    except ServiceError as error:
+        registrar("documento_falhou", code=error.code, http_status=error.status)
+        receipt.update(code=error.code, http_status=error.status, success=False)
+    finally:
+        session.close()
+        receipt["total_ms"] = round((time.monotonic() - inicio) * 1000)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", required=True)
@@ -44,6 +99,10 @@ def main():
     ap.add_argument("--credentials-stdin", action="store_true",
                     help="Lê {cpf, password, api_key} da entrada padrão, sem variável de ambiente")
     ap.add_argument("--cdp-url", help="Chrome ja aberto com --remote-debugging-port")
+    ap.add_argument("--retry", type=int, default=0,
+                    help="tentativas extras quando a falha é passageira (portal, captcha, browser)")
+    ap.add_argument("--retry-wait", type=int, default=30,
+                    help="segundos de espera entre tentativas")
     ap.add_argument("--log-format", choices=("texto", "jsonl"), default="texto",
                     help="texto: uma linha por passo; jsonl: um evento JSON por linha, "
                          "também gravado em events.jsonl na saída")
@@ -63,7 +122,6 @@ def main():
     started = time.monotonic()
     receipt = {"document": args.document, "success": False, "documents": {}, "errors": []}
     auth_receipt = {}
-    session = requests.Session()
 
     run_id = uuid.uuid4().hex[:12]
     events_path = out / "events.jsonl"
@@ -87,58 +145,33 @@ def main():
         except OSError:
             pass
 
-    def credenciamento_em_curso(phase_name):
-        """Escreve o recibo durante o login, para acompanhar sem esperar o fim."""
-        decorrido = (auth_receipt.get("phase_events") or [{}])[-1].get("elapsed_ms", 0)
-        campos = {"phase": phase_name, "elapsed_ms": decorrido}
-        if phase_name == "browser_start":
-            campos.update(browser_version=auth_receipt.get("browser_version"),
-                          browser_source=auth_receipt.get("browser_source"),
-                          cdp_port=auth_receipt.get("cdp_port"))
-        registrar("credenciamento", **campos)
-        auth_receipt["phase_now"] = phase_name
-        try:
-            (out / "receipt.json").write_text(json.dumps(
-                {**receipt, "stage": "credenciamento", "success": False,
-                 "credenciamento": auth_receipt}, indent=1, ensure_ascii=False),
-                encoding="utf-8")
-        except OSError:
-            pass
+    registrar("inicio", documento=args.document, saida=str(out), tentativas=args.retry + 1)
+    tentativas = []
+    total = args.retry + 1
+    for numero in range(1, total + 1):
+        receipt = {"document": args.document, "success": False, "documents": {}, "errors": []}
+        auth_receipt = {}
+        registrar("tentativa", numero=numero, de=total)
+        _tentativa(args, cpf, password, api_key, out, receipt, auth_receipt, registrar)
+        codigo = receipt.get("code") or (receipt.get("errors") or [{}])[0].get("code")
+        tentativas.append({"tentativa": numero, "code": codigo,
+                           "total_ms": receipt.get("total_ms")})
+        receipt["attempts"] = tentativas
+        if receipt["success"] or codigo not in TRANSIENT_CODES or numero == total:
+            break
+        registrar("nova_tentativa", motivo=codigo, aguardando_s=args.retry_wait)
+        time.sleep(args.retry_wait)
 
-    registrar("inicio", documento=args.document, saida=str(out))
-    try:
-        try:
-            login(session, cpf, password, api_key, receipt=auth_receipt,
-                  cdp_url=args.cdp_url or "", progress=credenciamento_em_curso)
-        except AuthError as error:
-            registrar("credenciamento_falhou", code=error.code, http_status=error.http_status)
-            auth_receipt.pop("phase_now", None)
-            receipt.update(code=error.code, http_status=error.http_status, stage="credenciamento",
-                           credenciamento=auth_receipt)
-            raise
-        auth_receipt.pop("phase_now", None)
-        receipt["credenciamento"] = auth_receipt
-        registrar("credenciamento_ok", elapsed_ms=auth_receipt.get("elapsed_ms", 0))
-        token = session.headers["Authorization"].removeprefix("Bearer ")
-        receipt.update(collect(DataprevClient(token), out, args.document,
-                               progress=registrar))
-        receipt["credenciamento"] = auth_receipt
-    except AuthError:
-        receipt["success"] = False
-    except ServiceError as error:
-        registrar("documento_falhou", code=error.code, http_status=error.status)
-        receipt.update(code=error.code, http_status=error.status, success=False)
-    finally:
-        session.close()
-    receipt["total_ms"] = round((time.monotonic() - started) * 1000)
     documento_erro = (receipt.get("errors") or [{}])[0].get("code")
-    registrar("fim", success=receipt["success"],
-              code=receipt.get("code") or documento_erro,
-              total_ms=receipt["total_ms"], documentos=list(receipt.get("documents", {})))
-    (out / "receipt.json").write_text(json.dumps(receipt, indent=1, ensure_ascii=False), encoding="utf-8")
+    registrar("fim", success=receipt["success"], code=receipt.get("code") or documento_erro,
+              total_ms=receipt["total_ms"], documentos=list(receipt.get("documents", {})),
+              tentativas=len(tentativas))
+    (out / "receipt.json").write_text(json.dumps(receipt, indent=1, ensure_ascii=False),
+                                      encoding="utf-8")
     print(json.dumps({"success": receipt["success"], "code": receipt.get("code"),
                       "documents": list(receipt.get("documents", {})),
                       "errors": receipt.get("errors", []),
+                      "attempts": tentativas,
                       "total_ms": receipt["total_ms"]}, indent=1, ensure_ascii=False))
     if receipt.get("code") in CREDENTIAL_CODES or receipt.get("stage") == "credenciamento":
         return 3
