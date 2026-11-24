@@ -332,9 +332,11 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         raise AuthError(error.code) from None
     except requests.RequestException as error:
         raise AuthError(request_failure(error, receipt)) from None
-    except PlaywrightError:
+    except PlaywrightError as error:
+        receipt["runtime_error_type"] = type(error).__name__
         raise AuthError("browser_error") from None
-    except Exception:
+    except Exception as error:
+        receipt["runtime_error_type"] = type(error).__name__
         raise AuthError("login_runtime_error") from None
     finally:
         observer.__exit__(None, None, None)

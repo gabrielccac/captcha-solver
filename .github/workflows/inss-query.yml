@@ -39,13 +39,19 @@ jobs:
           GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
           OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}
           QUERY_RECIPIENT_CERT: ${{ secrets.SMOKE_QUERY_RECIPIENT_CERT }}
+          INSS_EGRESS_GUARD: '1'
         run: |
           set -euo pipefail
           export INSS_SOURCE_DIR="$(mktemp -d)"
           trap 'rm -rf -- "$INSS_SOURCE_DIR"' EXIT
           GH_TOKEN="$GHCR_TOKEN" gh api "repos/$GITHUB_REPOSITORY/tarball/$GITHUB_SHA" |
             tar -xz --strip-components=1 -C "$INSS_SOURCE_DIR"
-          python3 "$INSS_SOURCE_DIR/deploy/actions/query_run.py"
+          status=0
+          python3 "$INSS_SOURCE_DIR/deploy/actions/query_run.py" || status=$?
+          if [ "$status" = 4 ]; then
+            echo "::warning::runner_egress_blocked: a borda do GOV.BR rejeita ou segura o POST do token a partir deste ASN; reenfileire em outro runner"
+          fi
+          exit "$status"
       - name: Save only recipient-encrypted query and numeric receipt
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
