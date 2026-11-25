@@ -211,7 +211,8 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         with ExitStack() as resources:
             phase("browser_start")
             pw = resources.enter_context(sync_playwright())
-            profile = resources.enter_context(TemporaryDirectory(prefix="govbr-http-"))
+            profile = resources.enter_context(TemporaryDirectory(
+                prefix="govbr-http-", ignore_cleanup_errors=True))
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]
@@ -250,7 +251,8 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
             else:
                 browser_login.submit_cpf(page,masked)
             phase("captcha_engine")
-            with TemporaryDirectory(prefix="captcha-widget-") as images:
+            with TemporaryDirectory(prefix="captcha-widget-",
+                                    ignore_cleanup_errors=True) as images:
                 deadline = time.monotonic() + 25
                 while not hcaptcha.vis_modal(page) and not hcaptcha.page_state(page, HANDOFF_SELECTOR).get("done"):
                     failure = browser_login.login_failure(page)
