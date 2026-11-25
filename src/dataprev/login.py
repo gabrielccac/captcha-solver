@@ -212,6 +212,7 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=Fal
             receipt["cdp_port"] = manager.cdp_port
             resources.callback(browser.close)
         page = browser.contexts[0].pages[0]
+        watch = callback_watch(page)
         receipt["browser_version"] = browser.version
         phase("gateway")
         page.goto(START, wait_until="domcontentloaded", timeout=45000)
@@ -263,7 +264,7 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=Fal
         except PlaywrightError:
             pass
         phase("token")
-        token = wait_for_token(page, receipt, watch=callback_watch(page))
+        token = wait_for_token(page, receipt, watch=watch)
         if not token:
             raise AuthError("token_not_captured")
         return token
