@@ -22,6 +22,7 @@ from auth.page_diagnostics import is_upstream_rejection_page
 from captcha.browser import ManagedBrowser
 from captcha import hcaptcha
 from . import session as browser_login
+from .auth_retry import authenticate_with_retry
 from .http_errors import observe, request_failure
 
 PORTAL = "https://meu.inss.gov.br/"
@@ -369,25 +370,43 @@ def main():
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     receipt = {"success": False, "api_session_verified": False}
+
+    def authenticate():
+        # Each attempt gets a fresh session and receipt; the last one is reported.
+        receipt.clear()
+        receipt.update(success=False, api_session_verified=False)
+        started = time.monotonic()
+        outcome = {"success": False, "code": "login_runtime_error", "receipt": receipt}
+        try:
+            values = load_env_file(args.env_file)
+            cpf = "".join(c for c in values.get("GOVBR_CPF", "") if c in "0123456789")
+            with requests.Session() as session:
+                login(session, cpf, values.get("GOVBR_PASSWORD", ""),
+                      values.get("OPENROUTER_API_KEY", "").strip(), receipt=receipt,
+                      optimize_interactions=args.fast_interactions,batch_captcha=args.batch_captcha)
+            outcome.update(success=True, code="ok")
+        except (AuthError, browser_login.LoginError) as error:
+            outcome["code"] = error.code
+        except FileNotFoundError:
+            outcome["code"] = "env_file_missing"
+        except requests.RequestException as error:
+            outcome['code'] = request_failure(error, receipt)
+        except PlaywrightError as error:
+            receipt["runtime_error_type"] = type(error).__name__
+            outcome["code"] = "browser_error"
+        except Exception as error:
+            receipt["runtime_error_type"] = type(error).__name__
+        finally:
+            outcome["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+        return outcome
+
     try:
-        values = load_env_file(args.env_file)
-        cpf = "".join(c for c in values.get("GOVBR_CPF", "") if c in "0123456789")
-        with requests.Session() as session:
-            login(session, cpf, values.get("GOVBR_PASSWORD", ""),
-                  values.get("OPENROUTER_API_KEY", "").strip(), receipt=receipt,
-                  optimize_interactions=args.fast_interactions,batch_captcha=args.batch_captcha)
-    except (AuthError, browser_login.LoginError) as error:
-        receipt["code"] = error.code
-    except FileNotFoundError:
-        receipt["code"] = "env_file_missing"
-    except requests.RequestException as error:
-        receipt['code'] = request_failure(error, receipt)
-    except PlaywrightError:
-        receipt["code"] = "browser_error"
+        outcome = authenticate_with_retry(authenticate)
+        receipt["auth_retry"] = outcome["auth_retry"]
+        if not outcome["success"]:
+            receipt["code"] = outcome["code"]
     except KeyboardInterrupt:
         receipt["code"] = "cancelled"
-    except Exception:
-        receipt["code"] = "login_runtime_error"
     (args.out / "receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
     print(json.dumps({key: receipt[key] for key in ("success", "code")}))
     return 0 if receipt["success"] else 3
