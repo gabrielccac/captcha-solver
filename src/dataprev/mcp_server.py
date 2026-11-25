@@ -31,6 +31,7 @@ RECOVERABLE = CREDENTIAL_CODES | {
     "invalid_cpf_format", "password_missing_in_env", "solver_key_missing", "solver_provider_error",
     "browser_error", "captcha_challenge_missing", "captcha_not_accepted",
     "captcha_selection_not_confirmed", "login_page_unrecognized", "token_not_captured",
+    "callback_access_denied", "callback_rejected", "callback_temporarily_unavailable",
     "token_expired", "token_claims_unreadable", "token_wrong_audience", "identity_failed",
     "identity_mismatch", "dataprev_login_runtime_error", "fresh_http_session_required",
 }

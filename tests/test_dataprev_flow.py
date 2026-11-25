@@ -125,12 +125,14 @@ def test_retry_nao_insiste_em_erro_de_credencial(monkeypatch, tmp_path, capsys):
 
 
 @pytest.mark.parametrize("codigo", ["token_not_captured", "identity_failed", "browser_error",
-                                    "captcha_not_accepted", "upstream_empty_response"])
+                                    "captcha_not_accepted", "upstream_empty_response",
+                                    "callback_temporarily_unavailable"])
 def test_codigos_passageiros_entram_no_retry(codigo):
     assert codigo in dataprev_flow.TRANSIENT_CODES
 
 
 @pytest.mark.parametrize("codigo", ["invalid_credentials", "password_missing_in_env",
-                                    "solver_key_missing", "identity_mismatch"])
+                                    "solver_key_missing", "identity_mismatch",
+                                    "callback_access_denied", "callback_rejected"])
 def test_codigos_definitivos_ficam_fora_do_retry(codigo):
     assert codigo not in dataprev_flow.TRANSIENT_CODES

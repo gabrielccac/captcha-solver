@@ -21,6 +21,7 @@ from captcha import hcaptcha
 from captcha.browser import ManagedBrowser, _x11 as _x11_display
 from inss.http_errors import observe, request_failure
 from inss.session import login_failure, submit_cpf, submit_password
+from . import callback
 from .client import DataprevClient, ServiceError, claims, prepare
 
 PORTAL = "https://cadunico.dataprev.gov.br/"
@@ -33,6 +34,9 @@ PASSWORD_SELECTOR = 'input[type="password"]'
 MODEL = "meta/muse-spark-1.3-contributor"
 MAX_ROUNDS = 3
 WAIT_SECONDS = 40
+POLL_SECONDS = 0.5
+TRANSIENT_RETRIES = 2
+TRANSIENT_WAIT_SECONDS = 5
 
 
 def fragment_params(fragment):
@@ -73,9 +77,50 @@ def account_or_consent(page):
         return ""
 
 
-def wait_for_token(page, receipt, timeout=WAIT_SECONDS):
-    """Espera o desfecho autenticado, que pode chegar por SSO silencioso."""
-    deadline = time.monotonic() + timeout
+def callback_outcome(page, watch=None):
+    """Desfecho conclusivo do callback: o da resposta observada ou o da URL atual."""
+    if watch is not None and watch.outcome is not None:
+        return watch.outcome
+    try:
+        return callback.classify(page.url)
+    except PlaywrightError:
+        return None
+
+
+def retry_transient(page, watch, outcome, deadline):
+    """Espera uma resposta nova quando o gateway sinaliza falha passageira.
+
+    A espera é curta e limitada: se o retorno não mudar, quem insiste é o
+    ``--retry`` do fluxo, com nova autorização. Devolve o token que aparecer e o
+    desfecho novo, quando houver.
+    """
+    if watch is not None:
+        watch.outcome = None
+    for _ in range(int(TRANSIENT_WAIT_SECONDS / POLL_SECONDS)):
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(POLL_SECONDS)
+        token = application_token(page)
+        if token:
+            return token, None
+        change = callback_outcome(page, watch)
+        if change is not None and change != outcome:
+            return "", change
+    return "", None
+
+
+def wait_for_token(page, receipt, timeout=WAIT_SECONDS, watch=None):
+    """Espera o desfecho autenticado, que pode chegar por SSO silencioso.
+
+    Erro definitivo no callback encerra a espera na hora, sem gastar o timeout.
+    Falha passageira sinalizada ganha uma espera curta por uma resposta nova e,
+    se nada mudar, também encerra; o silêncio — nenhum callback, nenhuma
+    resposta — espera a janela inteira, porque aí não há o que ler.
+    """
+    started = time.monotonic()
+    deadline = started + timeout
+    retries = TRANSIENT_RETRIES
+    events = receipt.setdefault("callback_events", [])
     while time.monotonic() < deadline:
         token = application_token(page)
         if token:
@@ -86,7 +131,21 @@ def wait_for_token(page, receipt, timeout=WAIT_SECONDS):
             failure = None
         if failure:
             raise AuthError(failure.code, http_status=getattr(failure, "status", None))
-        time.sleep(0.5)
+        outcome = callback_outcome(page, watch)
+        while outcome is not None:
+            events.append(outcome.event((time.monotonic() - started) * 1000))
+            if outcome.kind == "terminal" or not retries:
+                raise AuthError(outcome.code, http_status=outcome.http_status)
+            retries -= 1
+            token, change = retry_transient(page, watch, outcome, deadline)
+            if token:
+                return token
+            if change is None:
+                raise AuthError(outcome.code, http_status=outcome.http_status)
+            outcome = change
+        time.sleep(POLL_SECONDS)
+    events.append(callback.Outcome("silent", "callback_silent").event(
+        (time.monotonic() - started) * 1000))
     url = urlsplit(page.url)
     receipt["final_host"] = url.hostname or ""
     receipt["final_path"] = url.path
@@ -118,6 +177,16 @@ def wait_outcome(page, receipt, timeout=WAIT_SECONDS):
         time.sleep(0.5)
     receipt["final_host"] = urlsplit(page.url).hostname or ""
     return "unknown", ""
+
+
+def callback_watch(page):
+    """Escuta as respostas do callback; sem eventos na página, sobra a URL."""
+    watch = callback.CallbackWatch()
+    try:
+        page.on("response", watch.observe)
+    except PlaywrightError:
+        pass
+    return watch
 
 
 def browser_source_label(headless=False):
@@ -194,7 +263,7 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=Fal
         except PlaywrightError:
             pass
         phase("token")
-        token = wait_for_token(page, receipt)
+        token = wait_for_token(page, receipt, watch=callback_watch(page))
         if not token:
             raise AuthError("token_not_captured")
         return token

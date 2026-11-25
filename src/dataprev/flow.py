@@ -40,7 +40,7 @@ TRANSIENT_CODES = {
     "token_not_captured", "captcha_not_accepted", "captcha_selection_not_confirmed",
     "captcha_challenge_missing", "browser_error", "dataprev_login_runtime_error",
     "upstream_empty_response", "upstream_invalid_json", "session_expired", "not_authorized",
-    "identity_failed", "identity_unparsed",
+    "identity_failed", "identity_unparsed", "callback_temporarily_unavailable",
 }
 
 
@@ -71,7 +71,10 @@ def _tentativa(args, cpf, password, api_key, out, receipt, auth_receipt, registr
             login(session, cpf, password, api_key, receipt=auth_receipt,
                   cdp_url=args.cdp_url or "", progress=em_curso, headless=args.headless)
         except AuthError as error:
-            registrar("credenciamento_falhou", code=error.code, http_status=error.http_status)
+            registrar("credenciamento_falhou", code=error.code,
+                      http_status=error.http_status,
+                      etapa=auth_receipt.get("failure_stage"),
+                      elapsed_ms=auth_receipt.get("elapsed_ms"))
             auth_receipt.pop("phase_now", None)
             receipt.update(code=error.code, http_status=error.http_status, stage="credenciamento",
                            credenciamento=auth_receipt)
