@@ -19,8 +19,15 @@ def attempt_limit():
     return min(MAX_ATTEMPTS, max(1, requested))
 
 
+REJECTION_STAGES = {'http_consume_captcha', 'http_password', 'http_oauth_redirect'}
+
+
 def retry_allowed(result):
     receipt = result.get('receipt', {})
+    if result.get('code') == 'upstream_request_rejected':
+        # The rejection page belongs to the edge, never to the account: no
+        # password was evaluated, so a fresh session may simply get through.
+        return receipt.get('failure_stage') in REJECTION_STAGES
     if result.get('success') or receipt.get('http_password_posts') or receipt.get('browser_password_posts'):
         return False
     if receipt.get('captcha_terminal', {}).get('kind') in ('two_factor', 'consent', 'account_update'):
@@ -76,10 +83,16 @@ def authenticate_with_retry(authenticate):
     result['auth_retry'] = dict(attempts=len(history), max_attempts=limit,
         budget_ms=RETRY_BUDGET_MS, stop_reason=stop,
         recovered=len(history) > 1 and result['success'], history=history)
-    if len(history) > 1 and history[0].get('failure_stage') == 'http_consume_captcha':
+    if len(history) > 1:
         first = history[0]
-        field = 'captcha_retry' if first['code'] == 'captcha_http_not_accepted' else 'pre_password_retry'
-        result[field] = dict(first_worker_ms=first['elapsed_ms'], recovered=result['success'])
-        if field == 'pre_password_retry':
-            result[field]['first_code'] = first['code']
+        if first['code'] == 'upstream_request_rejected':
+            field = 'rejection_retry'
+        elif first.get('failure_stage') == 'http_consume_captcha':
+            field = 'captcha_retry' if first['code'] == 'captcha_http_not_accepted' else 'pre_password_retry'
+        else:
+            field = None
+        if field:
+            result[field] = dict(first_worker_ms=first['elapsed_ms'], recovered=result['success'])
+            if field == 'pre_password_retry':
+                result[field]['first_code'] = first['code']
     return result
