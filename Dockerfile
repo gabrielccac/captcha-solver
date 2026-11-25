@@ -1,6 +1,6 @@
 FROM python:3.12-slim-bookworm
 
-ENV PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 HOME=/tmp TZ=America/Sao_Paulo
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 HOME=/tmp TZ=America/Sao_Paulo
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl xvfb fonts-liberation tzdata \
     && curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb \
     && apt-get install -y --no-install-recommends /tmp/chrome.deb \

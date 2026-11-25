@@ -54,7 +54,7 @@ def login_session(monkeypatch, token=None, **identity):
     session.send = server.send
     token = app_token() if token is None else token
     monkeypatch.setattr(dataprev_login, "browser_leg",
-                        lambda cpf, password, api_key, receipt, phase, cdp_url="": token)
+                        lambda cpf, password, api_key, receipt, phase, cdp_url="", headless=False: token)
     return session, server
 
 
@@ -155,6 +155,43 @@ def test_token_is_taken_from_localstorage_after_the_redirect(monkeypatch):
 def test_token_is_also_read_from_the_url_fragment():
     page = Page("https://cadunico.dataprev.gov.br/#/successLogin?token=fixture-fragment", token="")
     assert dataprev_login.application_token(page) == "fixture-fragment"
+
+
+def test_wait_timeout_records_the_fragment_shape_without_token_values(monkeypatch):
+    page = Page("https://cadunico.dataprev.gov.br/#/home?retorno=valor-nao-lido", token="")
+    page.evaluate = lambda script: [] if "localStorage" in script else ""
+    monkeypatch.setattr(dataprev_login, "login_failure", lambda page: None)
+    receipt = {}
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.2) == ""
+    assert receipt["final_fragment_params"] == ["retorno"]
+    assert receipt["final_storage_keys"] == []
+    assert "valor-nao-lido" not in json.dumps(receipt)
+
+
+def test_wait_timeout_records_the_localstorage_keys_when_the_fragment_is_empty(monkeypatch):
+    page = Page("https://cadunico.dataprev.gov.br/#/home", token="")
+    page.evaluate = lambda script: ["session", "token", "usuario"] if "Object.keys" in script else ""
+    monkeypatch.setattr(dataprev_login, "login_failure", lambda page: None)
+    receipt = {}
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.2) == ""
+    assert receipt["final_fragment_params"] == []
+    assert receipt["final_storage_keys"] == ["session", "token", "usuario"]
+
+
+def test_browser_source_names_the_real_display(monkeypatch):
+    monkeypatch.setattr(dataprev_login, "_x11_display", lambda: True)
+    assert dataprev_login.browser_source_label() == "xvfb_chrome"
+    monkeypatch.setattr(dataprev_login, "_x11_display", lambda: False)
+    assert dataprev_login.browser_source_label() == "chrome_display"
+    monkeypatch.setattr(dataprev_login, "_x11_display", lambda: True)
+    assert dataprev_login.browser_source_label(headless=True) == "chrome_headless"
+
+
+def test_login_reports_phase_progress_as_it_happens(monkeypatch):
+    session, server = login_session(monkeypatch)
+    seen = []
+    dataprev_login.login(session, CPF, PASSWORD, API_KEY, receipt={}, progress=seen.append)
+    assert seen == ["browser_start", "identity"]
 
 
 def test_wait_reports_the_final_host_when_the_token_never_arrives(monkeypatch):

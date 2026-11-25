@@ -16,19 +16,27 @@ CREDENTIAL_CODES = {"session_expired", "not_authorized", "identity_mismatch", "i
                     "credential_missing", "credential_wrong_audience", "credential_wrong_issuer"}
 
 
-def collect(client, out, document):
+def collect(client, out, document, progress=None):
     """Baixa os documentos pedidos. Falha em um documento não derruba o outro."""
     receipt = {"document": document, "documents": {}, "errors": []}
     receipt["credential"] = export(client)["token_validity"]
     receipt["session"] = client.check()
     wanted = [DOCUMENTS[document]] if DOCUMENTS[document] else ["comprovante", "consulta_completa"]
     for name in wanted:
+        if progress:
+            progress("documento_inicio", documento=name)
         try:
             result = client.consulta_completa() if name == "consulta_completa" else client.comprovante()
         except ServiceError as error:
+            if progress:
+                progress("documento_falhou", documento=name, code=error.code,
+                         http_status=error.status)
             receipt["errors"].append({"document": name, "code": error.code, "http_status": error.status})
             continue
         path = save(result, out / f"{name.replace('_', '-')}.pdf")
+        if progress:
+            progress("documento_salvo", documento=name, file=path.name,
+                     bytes=path.stat().st_size)
         receipt["documents"][name] = {key: value for key, value in result.items()
                                       if key not in {"pdf", "qr_code", "validacao"}}
         receipt["documents"][name].update(file=path.name,

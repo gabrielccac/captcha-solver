@@ -11,14 +11,14 @@ import io
 import time
 from contextlib import ExitStack, redirect_stderr
 from tempfile import TemporaryDirectory
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from auth.govbr import AuthError, fragment_param
 from captcha import hcaptcha
-from captcha.browser import ManagedBrowser
+from captcha.browser import ManagedBrowser, _x11 as _x11_display
 from inss.http_errors import observe, request_failure
 from inss.session import login_failure, submit_cpf, submit_password
 from .client import DataprevClient, ServiceError, claims, prepare
@@ -33,6 +33,21 @@ PASSWORD_SELECTOR = 'input[type="password"]'
 MODEL = "meta/muse-spark-1.3-contributor"
 MAX_ROUNDS = 3
 WAIT_SECONDS = 40
+
+
+def fragment_params(fragment):
+    """Nomes dos parâmetros do fragmento, sem valores: o token pode estar nele."""
+    if "?" not in fragment:
+        return []
+    return sorted(parse_qs(fragment.split("?", 1)[1], keep_blank_values=True))
+
+
+def storage_keys(page):
+    """Chaves do localStorage da página final: nomes, nunca valores."""
+    try:
+        return sorted(page.evaluate("() => Object.keys(window.localStorage)") or [])
+    except PlaywrightError:
+        return []
 
 
 def application_token(page):
@@ -76,6 +91,8 @@ def wait_for_token(page, receipt, timeout=WAIT_SECONDS):
     receipt["final_host"] = url.hostname or ""
     receipt["final_path"] = url.path
     receipt["final_has_hash"] = bool(url.fragment)
+    receipt["final_fragment_params"] = fragment_params(url.fragment)
+    receipt["final_storage_keys"] = storage_keys(page)
     return ""
 
 
@@ -103,7 +120,14 @@ def wait_outcome(page, receipt, timeout=WAIT_SECONDS):
     return "unknown", ""
 
 
-def browser_leg(cpf, password, api_key, receipt, phase, cdp_url=""):
+def browser_source_label(headless=False):
+    """De onde vem o display: Xvfb no Linux, a tela do usuário no resto, nada no headless."""
+    if headless:
+        return "chrome_headless"
+    return "xvfb_chrome" if _x11_display() else "chrome_display"
+
+
+def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=False):
     """Gateway, CPF, hCaptcha, senha no próprio formulário e captura do token."""
     with ExitStack() as resources:
         playwright = resources.enter_context(sync_playwright())
@@ -111,11 +135,12 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url=""):
             receipt["browser_source"] = "external_cdp"
             browser = playwright.chromium.connect_over_cdp(cdp_url)
         else:
-            receipt["browser_source"] = "xvfb_chrome"
+            receipt["browser_source"] = browser_source_label(headless)
             profile = resources.enter_context(TemporaryDirectory(prefix="dataprev-govbr-"))
-            manager = ManagedBrowser(profile, quiet=True)
+            manager = ManagedBrowser(profile, quiet=True, headless=headless)
             resources.callback(manager.stop)
             browser = playwright.chromium.connect_over_cdp(manager.start(wait_ready=True))
+            receipt["cdp_port"] = manager.cdp_port
             resources.callback(browser.close)
         page = browser.contexts[0].pages[0]
         receipt["browser_version"] = browser.version
@@ -203,7 +228,8 @@ def verify_token(session, token, cpf, receipt) -> None:
         raise AuthError("identity_mismatch")
 
 
-def login(session, cpf, password, api_key, *, receipt=None, cdp_url=""):
+def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None,
+          headless=False):
     """Autentica a `requests.Session` do chamador no cadunico.dataprev.gov.br.
 
     Um login por chamada. Ao final a sessão carrega ``Authorization: Bearer`` com o
@@ -219,6 +245,8 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url=""):
     def phase(name):
         receipt["phase_events"].append({"phase": name,
             "elapsed_ms": round((time.monotonic() - started) * 1000)})
+        if progress:
+            progress(name)
 
     observer = observe(session, receipt)
     observer.__enter__()
@@ -233,7 +261,8 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url=""):
             raise AuthError("fresh_http_session_required")
         prepare(session)
         phase("browser_start")
-        token = browser_leg(cpf, password, api_key, receipt, phase, cdp_url)
+        token = browser_leg(cpf, password, api_key, receipt, phase, cdp_url,
+                            headless=headless)
         phase("identity")
         verify_token(session, token, cpf, receipt)
         receipt.update(success=True, code="ok")
