@@ -102,6 +102,16 @@ def tiles_ready(crop, grid):
                for stat in stats)
 
 
+def ready_budget(rnd):
+    """Wait longer on later rounds: a distant egress delivers the challenge assets slowly."""
+    try:
+        base = float(os.environ.get("INSS_TILE_READY_S", 8))
+        step = float(os.environ.get("INSS_TILE_READY_STEP_S", 4))
+    except ValueError:
+        base, step = 8.0, 4.0
+    return base + step * max(0, rnd)
+
+
 def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
                 success_selector=None, *, api_key=None, interactions=None, vision_solver=None,
                 vision_session=None):
@@ -114,8 +124,10 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
         return False, {**info, "why": "no-modal"}
     clip = modal_clip(page, boxes[0])
     shot_path = os.path.join(out_dir, f"r{rnd}-modal.png")
+    budget = ready_budget(rnd)
+    info["tile_budget_s"] = budget
     t0 = time.monotonic()
-    deadline = t0 + 8
+    deadline = t0 + budget
     while True:
         clip = shot(page, shot_path, clip)
         if not clip:

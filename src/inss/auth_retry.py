@@ -25,6 +25,9 @@ def retry_allowed(result):
         return False
     if receipt.get('captcha_terminal', {}).get('kind') in ('two_factor', 'consent', 'account_update'):
         return False
+    if result.get('code') == 'login_runtime_error':
+        # A local fault (disk, socket, profile cleanup) is worth one fresh attempt.
+        return receipt.get('runtime_error_type') == 'OSError'
     if receipt.get('failure_stage') == 'captcha_engine':
         return result.get('code') in ENGINE_ERRORS
     return (result.get('code') in HANDOFF_ERRORS

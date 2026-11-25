@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import socket
 import time
+import traceback
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, urlsplit
@@ -372,6 +373,10 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         raise AuthError("browser_error") from None
     except Exception as error:
         receipt["runtime_error_type"] = type(error).__name__
+        receipt["runtime_error_errno"] = getattr(error, "errno", None)
+        frame = traceback.extract_tb(error.__traceback__)[-1:] if error.__traceback__ else []
+        receipt["runtime_error_at"] = (f"{os.path.basename(frame[0].filename)}:{frame[0].lineno}"
+                                       if frame else None)
         raise AuthError("login_runtime_error") from None
     finally:
         observer.__exit__(None, None, None)
