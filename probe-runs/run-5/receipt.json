@@ -1,0 +1,275 @@
+{
+  "success": true,
+  "api_session_verified": true,
+  "browser_password_posts": 0,
+  "browser_captcha_posts": 0,
+  "transport": "replay",
+  "http_password_posts": 1,
+  "http_captcha_posts": 1,
+  "phase_events": [
+    {
+      "phase": "browser_start",
+      "elapsed_ms": 0
+    },
+    {
+      "phase": "authorize",
+      "elapsed_ms": 5257
+    },
+    {
+      "phase": "cpf",
+      "elapsed_ms": 12972
+    },
+    {
+      "phase": "captcha_engine",
+      "elapsed_ms": 18857
+    },
+    {
+      "phase": "http_consume_captcha",
+      "elapsed_ms": 38602
+    },
+    {
+      "phase": "release_browser",
+      "elapsed_ms": 39090
+    },
+    {
+      "phase": "http_password",
+      "elapsed_ms": 39515
+    },
+    {
+      "phase": "http_oauth_redirect",
+      "elapsed_ms": 39661
+    },
+    {
+      "phase": "http_api_session",
+      "elapsed_ms": 40098
+    }
+  ],
+  "model": "meta/muse-spark-1.3-contributor",
+  "reasoning_effort": "minimal",
+  "selection_backend": "visual",
+  "interaction_profile": "optimized",
+  "browser_version": "156.0.8078.79",
+  "rounds": [
+    {
+      "round": 0,
+      "modal_wait_s": 0.2,
+      "capture_s": 0.9,
+      "extract_s": 0.2,
+      "solve_s": 2.8,
+      "click_s": 2.8,
+      "verdict_s": 1.5
+    },
+    {
+      "round": 1,
+      "modal_wait_s": 0.0,
+      "capture_s": 0.5,
+      "extract_s": 0.1,
+      "solve_s": 3.9,
+      "click_s": 2.5,
+      "verdict_s": 1.4
+    }
+  ],
+  "selection_waits": [
+    {
+      "pre_submit_wait_ms": 830,
+      "confirmed": true,
+      "expected_selection_count": 3,
+      "frames": 2,
+      "expected_selection": [
+        1,
+        7,
+        9
+      ],
+      "observed_selection": [
+        1,
+        7,
+        9
+      ],
+      "failure_phase": null
+    },
+    {
+      "pre_submit_wait_ms": 699,
+      "confirmed": true,
+      "expected_selection_count": 3,
+      "frames": 2,
+      "expected_selection": [
+        3,
+        5,
+        9
+      ],
+      "observed_selection": [
+        3,
+        5,
+        9
+      ],
+      "failure_phase": null
+    }
+  ],
+  "token_captured_before_browser_send": true,
+  "token_age_at_http_post_ms": 1046,
+  "http_operation": "inss_userinfo",
+  "http_method": "GET",
+  "http_trace": [
+    {
+      "operation": "govbr_sso",
+      "route": "login",
+      "method": "POST",
+      "elapsed_ms": 474,
+      "http_status": 200,
+      "error": null,
+      "redirect_route": null,
+      "redirect_same_origin": null,
+      "content_type": "html",
+      "request_content_type": "form",
+      "request_body_bytes": 1682,
+      "headers_bytes": 1188,
+      "request_cookie_count": 5,
+      "set_cookie_present": true,
+      "response_body_bytes": 7937,
+      "server_family": "unknown"
+    },
+    {
+      "operation": "govbr_sso",
+      "route": "login",
+      "method": "POST",
+      "elapsed_ms": 135,
+      "http_status": 302,
+      "error": null,
+      "redirect_route": "authorize",
+      "redirect_same_origin": true,
+      "content_type": "missing",
+      "request_content_type": "form",
+      "request_body_bytes": 2217,
+      "headers_bytes": 968,
+      "request_cookie_count": 5,
+      "set_cookie_present": true,
+      "response_body_bytes": 0,
+      "server_family": "unknown"
+    },
+    {
+      "operation": "govbr_sso",
+      "route": "authorize",
+      "method": "GET",
+      "elapsed_ms": 166,
+      "http_status": 302,
+      "error": null,
+      "redirect_route": "other",
+      "redirect_same_origin": false,
+      "content_type": "missing",
+      "request_content_type": "missing",
+      "request_body_bytes": 0,
+      "headers_bytes": 1123,
+      "request_cookie_count": 7,
+      "set_cookie_present": true,
+      "response_body_bytes": 0,
+      "server_family": "unknown"
+    },
+    {
+      "operation": "other_http_service",
+      "route": "other",
+      "method": "GET",
+      "elapsed_ms": 263,
+      "http_status": 200,
+      "error": null,
+      "redirect_route": null,
+      "redirect_same_origin": null,
+      "content_type": "html",
+      "request_content_type": "missing",
+      "request_body_bytes": 0,
+      "headers_bytes": 206,
+      "request_cookie_count": 0,
+      "set_cookie_present": false,
+      "response_body_bytes": 4386,
+      "server_family": "other"
+    },
+    {
+      "operation": "inss_code_exchange",
+      "route": "other",
+      "method": "GET",
+      "elapsed_ms": 492,
+      "http_status": 200,
+      "error": null,
+      "redirect_route": null,
+      "redirect_same_origin": null,
+      "content_type": "json",
+      "request_content_type": "missing",
+      "request_body_bytes": 0,
+      "headers_bytes": 344,
+      "request_cookie_count": 0,
+      "set_cookie_present": false,
+      "response_body_bytes": 858,
+      "server_family": "nginx"
+    },
+    {
+      "operation": "inss_userinfo",
+      "route": "other",
+      "method": "GET",
+      "elapsed_ms": 533,
+      "http_status": 200,
+      "error": null,
+      "redirect_route": null,
+      "redirect_same_origin": null,
+      "content_type": "json",
+      "request_content_type": "missing",
+      "request_body_bytes": 0,
+      "headers_bytes": 1198,
+      "request_cookie_count": 0,
+      "set_cookie_present": false,
+      "response_body_bytes": 3637,
+      "server_family": "nginx"
+    },
+    {
+      "operation": "inss_userinfo",
+      "route": "other",
+      "method": "GET",
+      "elapsed_ms": 106,
+      "http_status": 200,
+      "error": null,
+      "redirect_route": null,
+      "redirect_same_origin": null,
+      "content_type": "json",
+      "request_content_type": "missing",
+      "request_body_bytes": 0,
+      "headers_bytes": 4811,
+      "request_cookie_count": 0,
+      "set_cookie_present": false,
+      "response_body_bytes": null,
+      "server_family": "nginx"
+    }
+  ],
+  "captcha_http_status": 200,
+  "captcha_http_accepted_password_form": true,
+  "browser_released_at_ms": 39515,
+  "oauth_callback_received": true,
+  "redirect_hops": 2,
+  "code_exchange_http_status": 200,
+  "userinfo_bootstrap_http_status": 200,
+  "last_http_status": 200,
+  "authenticated_endpoint_http_status": 200,
+  "code": "ok",
+  "captcha_batch": {
+    "enabled": true,
+    "challenge_requests": 1,
+    "decoded_images": 18,
+    "ignored_responses": 1,
+    "model_calls": 2,
+    "batch_calls": 1,
+    "fallback_calls": 1,
+    "cache_hits": 0,
+    "fallback_reasons": {
+      "mapping_unavailable": 1
+    }
+  },
+  "elapsed_ms": 41234,
+  "phase_ms": {
+    "browser_start": 5257,
+    "authorize": 7715,
+    "cpf": 5885,
+    "captcha_engine": 19745,
+    "http_consume_captcha": 488,
+    "release_browser": 425,
+    "http_password": 146,
+    "http_oauth_redirect": 437,
+    "http_api_session": 1136
+  }
+}
