@@ -25,6 +25,7 @@ _flow_lock = Lock()
 TIMEOUT_SECONDS = 300
 DOCUMENTS_DIR = Path(os.environ.get("DATAPREV_DOCUMENTS_DIR",
                                     str(Path.cwd() / "runs" / "mcp" / "dataprev")))
+ENV_FILE = os.environ.get("DATAPREV_ENV_FILE", ".env")
 DOCUMENTS = {"comprovante": "comprovante", "consulta": "consulta", "ambos": "all"}
 RECOVERABLE = CREDENTIAL_CODES | {
     "invalid_cpf_format", "password_missing_in_env", "solver_key_missing", "solver_provider_error",
@@ -43,8 +44,9 @@ def get_cadunico_documents(cpf: str, password: str = "", api_key: str = "",
     Faz o credenciamento no gov.br no navegador desta máquina (hCaptcha e senha)
     e baixa os documentos pedidos. A senha vale só para esta chamada: chega por
     entrada padrão, nunca como argumento de processo, e não volta na resposta.
-    password vazio usa GOVBR_PASSWORD do .env local; api_key é a chave do modelo
-    que resolve o hCaptcha e, vazia, usa OPENROUTER_API_KEY do mesmo .env.
+    password vazio usa GOVBR_PASSWORD do .env local (ou de DATAPREV_ENV_FILE);
+    api_key é a chave do modelo que resolve o hCaptcha e, vazia, usa
+    OPENROUTER_API_KEY do mesmo arquivo.
     documento aceita comprovante, consulta ou ambos.
     Cada documento volta em documents com file_path local (PDF em modo 600) e os
     metadados do próprio Dataprev, incluindo qr_code e validacao_pdf.
@@ -64,6 +66,9 @@ def get_cadunico_documents(cpf: str, password: str = "", api_key: str = "",
         out = Path(work) / "out"
         command = [sys.executable, "-m", "dataprev.flow", "--credentials-stdin",
                    "--out", str(out), "--document", DOCUMENTS[documento]]
+        env_file = Path(ENV_FILE)
+        if env_file.is_file():
+            command.extend(["--env-file", str(env_file)])
         try:
             subprocess.run(command, input=json.dumps({"cpf": digits, "password": password,
                                                       "api_key": api_key}) + "\n",

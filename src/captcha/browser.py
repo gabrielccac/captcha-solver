@@ -13,10 +13,12 @@ import urllib.request
 
 CHROME_PATHS = {
     "nt": [r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+           r"C:\Program Files\Google\Chrome\Application\chrome.exe",
            r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+           r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
            r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
            r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
-           r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"],
+           r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"],
     "darwin": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
     "posix": ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"],
 }
@@ -35,11 +37,31 @@ def _log(name):
     return os.path.join(tempfile.gettempdir(), f"{name}.log")
 
 
+def _registry_chrome():
+    """Caminho instalado do Chrome, que o registro conhece mesmo sem PROGRAMFILES no ambiente."""
+    if os.name != "nt":
+        return None
+    import winreg
+
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(root, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe") as key:
+                path, _ = winreg.QueryValueEx(key, None)
+        except OSError:
+            continue
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
 def chrome_binary():
-    """Executável do Chrome: CHROME_BIN manda, depois os caminhos do sistema."""
+    """Executável do Chrome: CHROME_BIN manda, depois o registro e os caminhos do sistema."""
     explicit = os.environ.get("CHROME_BIN")
     if explicit:
         return explicit
+    installed = _registry_chrome()
+    if installed:
+        return installed
     for candidate in CHROME_PATHS[_platform()]:
         path = os.path.expandvars(candidate)
         if os.path.isfile(path):
