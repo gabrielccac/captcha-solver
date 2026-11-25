@@ -40,6 +40,7 @@ TRANSIENT_CODES = {
     "token_not_captured", "captcha_not_accepted", "captcha_selection_not_confirmed",
     "captcha_challenge_missing", "browser_error", "dataprev_login_runtime_error",
     "upstream_empty_response", "upstream_invalid_json", "session_expired", "not_authorized",
+    "identity_failed", "identity_unparsed",
 }
 
 
@@ -51,7 +52,7 @@ def _tentativa(args, cpf, password, api_key, out, receipt, auth_receipt, registr
     def em_curso(phase_name):
         decorrido = (auth_receipt.get("phase_events") or [{}])[-1].get("elapsed_ms", 0)
         campos = {"phase": phase_name, "elapsed_ms": decorrido}
-        if phase_name == "browser_start":
+        if phase_name != "browser_start":
             campos.update(browser_version=auth_receipt.get("browser_version"),
                           browser_source=auth_receipt.get("browser_source"),
                           cdp_port=auth_receipt.get("cdp_port"))

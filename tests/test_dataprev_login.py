@@ -183,6 +183,8 @@ def test_browser_source_names_the_real_display(monkeypatch):
     assert dataprev_login.browser_source_label() == "xvfb_chrome"
     monkeypatch.setattr(dataprev_login, "_x11_display", lambda: False)
     assert dataprev_login.browser_source_label() == "chrome_display"
+    monkeypatch.setattr(dataprev_login, "_x11_display", lambda: True)
+    assert dataprev_login.browser_source_label(headless=True) == "chrome_headless"
 
 
 def test_login_reports_phase_progress_as_it_happens(monkeypatch):

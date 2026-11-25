@@ -120,8 +120,10 @@ def wait_outcome(page, receipt, timeout=WAIT_SECONDS):
     return "unknown", ""
 
 
-def browser_source_label():
-    """De onde vem o display: Xvfb no Linux, a tela do próprio usuário no resto."""
+def browser_source_label(headless=False):
+    """De onde vem o display: Xvfb no Linux, a tela do usuário no resto, nada no headless."""
+    if headless:
+        return "chrome_headless"
     return "xvfb_chrome" if _x11_display() else "chrome_display"
 
 
@@ -133,7 +135,7 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=Fal
             receipt["browser_source"] = "external_cdp"
             browser = playwright.chromium.connect_over_cdp(cdp_url)
         else:
-            receipt["browser_source"] = browser_source_label() + ("_headless" if headless else "")
+            receipt["browser_source"] = browser_source_label(headless)
             profile = resources.enter_context(TemporaryDirectory(prefix="dataprev-govbr-"))
             manager = ManagedBrowser(profile, quiet=True, headless=headless)
             resources.callback(manager.stop)
