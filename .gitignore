@@ -8,3 +8,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.egg-info/
+
+# local egress probe output
+probe-runs/
+probe.log
