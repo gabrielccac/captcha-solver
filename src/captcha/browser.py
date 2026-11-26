@@ -28,7 +28,7 @@ def _port_open(port):
 
 class ManagedBrowser:
     def __init__(self, profile_dir, cdp_port=9223, display=None, lang="pt-BR",
-                 window="1280,900", chrome_bin="/usr/bin/google-chrome", quiet=False):
+                 window=os.environ.get("INSS_CHROME_WINDOW", "1280,900"), chrome_bin="/usr/bin/google-chrome", quiet=False):
         self.profile_dir = profile_dir
         self.cdp_port = cdp_port
         self.display = display or _free_display()
@@ -76,6 +76,7 @@ class ManagedBrowser:
              f"--remote-debugging-port={self.cdp_port}",
              "--no-first-run", "--no-default-browser-check",
              "--disable-dev-shm-usage", "--renderer-process-limit=4",
+             *os.environ.get("INSS_CHROME_EXTRA_ARGS", "").split(),
              f"--window-size={self.window}",
              f"--lang={self.lang}", "about:blank"],
             env=env, stdout=open(os.devnull if self.quiet else "/tmp/cdp-chrome-run.log", "ab"),
