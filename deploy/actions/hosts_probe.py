@@ -23,15 +23,15 @@ with tempfile.TemporaryDirectory(prefix='hosts-', ignore_cleanup_errors=True) as
             browser = pw.chromium.connect_over_cdp(manager.start(wait_ready=True))
             page = browser.contexts[0].pages[0]
 
-            def on_request(request):
+            def on_request(route):
                 from urllib.parse import urlsplit
-                host = urlsplit(request.url).hostname or '?'
+                host = urlsplit(route.request.url).hostname or '?'
                 counts[host] += 1
                 if allow and not host.endswith(allow):
                     blocked_hosts[host] += 1
-                    request.abort()
+                    route.abort()
                 else:
-                    request.continue_()
+                    route.continue_()
 
             def on_response(response):
                 from urllib.parse import urlsplit
