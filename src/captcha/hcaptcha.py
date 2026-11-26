@@ -79,12 +79,14 @@ def click(page, x, y):
 
 
 def wait_modal(page, timeout_s=5):
+    """Poll fast: the widget appears in a fraction of a second and a slow poll
+    only adds dead time that the server never sees."""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         m = vis_modal(page)
         if m:
             return m
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(120)
     return []
 
 
@@ -98,7 +100,7 @@ def shot(page, path, clip, tries=2):
         except Exception as e:
             last = e
             if attempt + 1 < tries:
-                page.wait_for_timeout(500)
+                page.wait_for_timeout(150)
                 boxes = vis_modal(page)
                 if not boxes:
                     break
@@ -150,19 +152,23 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
     info["tile_budget_s"] = budget
     t0 = time.monotonic()
     deadline = t0 + budget
+    grid = None
     while True:
         clip = shot(page, shot_path, clip)
         if not clip:
             return False, {**info, "why": "shot-fail"}
         crop = Image.open(shot_path).copy()
-        grid = find_grid(crop)
+        if grid is None:
+            # Same clip, same geometry: finding the grid costs ~76 ms of pure
+            # Python and the answer cannot change between polls.
+            grid = find_grid(crop)
         if (tiles_ready(crop, grid)
                 and (interactions is None or interactions.images_ready(crop,grid))
                 and (vision_solver is None or vision_solver.images_ready(crop,grid))):
             break
         if time.monotonic() >= deadline:
             return False, {**info, "why": "tiles-not-ready"}
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(120)
     info["capture_s"] = round(time.monotonic() - t0, 1)
     if interactions is not None and not interactions.begin_round(page):
         interactions.record_result()
@@ -247,7 +253,7 @@ def solve_round(page, out_dir, rnd, model, reasoning_effort=None,
     deadline = time.monotonic() + 15
     candidate = None
     while time.monotonic() < deadline and not (st["tok"] > 0 or st["done"]):
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(150)
         st = page_state(page, success_selector)
         if st["tok"] > 0 or st["done"]:
             info["next_round_ready"] = True

@@ -118,6 +118,29 @@ class Connection:
             raise Error(entry[2])
         return entry[1]
 
+    def send_nowait(self, method, params=None, *, session_id=None):
+        """Write a command and return at once; the reply is discarded.
+
+        Chrome answers mouse moves only after the renderer acknowledges them
+        (about 16.6 ms each, one per frame), so awaiting every step of a path
+        made the pointer travel cost the sum of twelve frames. The events and
+        their order are identical either way; only the waiting is gone.
+        """
+        if self._closed:
+            raise Error(f"{method}: CDP connection is closed")
+        with self._pending_lock:
+            self._next_id += 1
+            message_id = self._next_id
+        payload = {"id": message_id, "method": method, "params": params or {}}
+        if session_id:
+            payload["sessionId"] = session_id
+        try:
+            with self._send_lock:
+                self._ws.send(json.dumps(payload))
+        except Exception as error:  # noqa: BLE001 - transport errors all surface as Error
+            raise Error(f"{method}: send failed: {error}") from None
+        return message_id
+
     def subscribe(self, method, handler):
         with self._subscribers_lock:
             self._subscribers.setdefault(method, []).append(handler)
@@ -510,6 +533,8 @@ class Mouse:
                 button="none",
                 buttons=0,
                 click_count=0,
+                wait=step == steps,
+                timestamp=time.time() - (steps - step) / _MOVE_FPS,
             )
         self._x, self._y = x, y
 
@@ -532,21 +557,26 @@ class Mouse:
             buttons=0, click_count=click_count,
         )
 
-    def _dispatch(self, event_type, x, y, *, button, buttons, click_count):
-        self._page._send(
-            "Input.dispatchMouseEvent",
-            {
-                "type": event_type,
-                "x": float(x),
-                "y": float(y),
-                "button": button,
-                "buttons": buttons,
-                "clickCount": click_count,
-            },
-        )
+    def _dispatch(self, event_type, x, y, *, button, buttons, click_count,
+                  wait=True, timestamp=None):
+        params = {
+            "type": event_type,
+            "x": float(x),
+            "y": float(y),
+            "button": button,
+            "buttons": buttons,
+            "clickCount": click_count,
+        }
+        if timestamp is not None:
+            params["timestamp"] = float(timestamp)
+        if wait:
+            self._page._send("Input.dispatchMouseEvent", params)
+        else:
+            self._page._send_nowait("Input.dispatchMouseEvent", params)
 
 
 _BUTTON_MASK = {"left": 1, "right": 2, "middle": 4}
+_MOVE_FPS = 60.0
 
 
 class Keyboard:
@@ -1340,6 +1370,9 @@ class Page:
         return self._conn.send(
             method, params, session_id=session or self._session, timeout=timeout / 1000
         )
+
+    def _send_nowait(self, method, params=None, *, session=None):
+        return self._conn.send_nowait(method, params, session_id=session or self._session)
 
     def _enable(self):
         self._send("Page.enable")
