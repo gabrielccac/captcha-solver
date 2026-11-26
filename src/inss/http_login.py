@@ -88,11 +88,20 @@ def verify_api(session, code, cpf, receipt):
     if not isinstance(mi, str) or not mi:
         raise AuthError("mi_token_missing")
     headers["miToken"] = mi
-    with session.get(info_url, headers=headers, timeout=30, allow_redirects=False,
-                     stream=True) as verified:
-        receipt["authenticated_endpoint_http_status"] = verified.status_code
-        if verified.status_code != 200:
-            raise AuthError("authenticated_endpoint_failed", http_status=verified.status_code)
+    # The token is already issued, so a hung confirmation GET is free to repeat.
+    for attempt in (1, 2):
+        try:
+            with session.get(info_url, headers=headers, timeout=30, allow_redirects=False,
+                             stream=True) as verified:
+                receipt["authenticated_endpoint_http_status"] = verified.status_code
+                break
+        except requests.Timeout:
+            if attempt == 2:
+                raise
+            receipt["authenticated_endpoint_retry"] = {"timeout": attempt}
+    if receipt["authenticated_endpoint_http_status"] != 200:
+        raise AuthError("authenticated_endpoint_failed",
+                        http_status=receipt["authenticated_endpoint_http_status"])
     # Caller owns this session. Tokens stay in memory for subsequent API requests.
     session.headers.update(headers)
     receipt["api_session_verified"] = True
