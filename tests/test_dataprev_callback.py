@@ -215,7 +215,7 @@ def test_silence_keeps_the_whole_timeout_and_says_so(monkeypatch):
     page = Page()
     receipt = {}
     started = time.monotonic()
-    assert dataprev_login.wait_for_token(page, receipt, timeout=0.3,
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.3, slow_timeout=0.3,
                                          watch=dataprev_login.callback_watch(page)) == ""
     assert time.monotonic() - started >= 0.3
     assert receipt["callback_events"] == [
@@ -275,7 +275,7 @@ def test_repeated_silent_rounds_cost_only_the_configured_timeout(monkeypatch):
     for _ in range(10):
         page = Page()
         receipt = {}
-        assert dataprev_login.wait_for_token(page, receipt, timeout=0.02,
+        assert dataprev_login.wait_for_token(page, receipt, timeout=0.02, slow_timeout=0,
                                              watch=dataprev_login.callback_watch(page)) == ""
         assert receipt["callback_events"] == [
             {"stage": "token", "kind": "silent", "code": "callback_silent",
@@ -358,9 +358,37 @@ def test_silence_records_the_path_the_callback_took(monkeypatch, entregues, redi
     for response in entregues:
         page.handlers["response"](response)
     receipt = {}
-    assert dataprev_login.wait_for_token(page, receipt, timeout=0.02, watch=watch) == ""
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.02, slow_timeout=0,
+                                         watch=watch) == ""
     assert receipt["callback_silence"] == {"redirect_seen": redirect,
                                            "last_document": document, "errors": [],
                                            "empty_200s": []}
     assert receipt["callback_events"][0]["code"] == "callback_silent"
     assert CODE not in json.dumps(receipt) and STATE not in json.dumps(receipt)
+
+
+def test_a_silence_after_the_application_loaded_stops_at_the_short_window(monkeypatch):
+    quiet_login_failure(monkeypatch)
+    monkeypatch.setattr(dataprev_login.time, "sleep", lambda seconds: None)
+    page = Page()
+    watch = dataprev_login.callback_watch(page)
+    page.handlers["response"](Document(HOME, 200))
+    receipt = {}
+    started = time.monotonic()
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.05,
+                                         watch=watch, slow_timeout=2) == ""
+    assert time.monotonic() - started < 1
+    assert receipt["callback_silence"]["last_document"] == "/"
+
+
+def test_a_silence_while_the_application_never_loaded_uses_the_long_window(monkeypatch):
+    quiet_login_failure(monkeypatch)
+    monkeypatch.setattr(dataprev_login.time, "sleep", lambda seconds: None)
+    page = Page()
+    watch = dataprev_login.callback_watch(page)
+    receipt = {}
+    started = time.monotonic()
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.05,
+                                         watch=watch, slow_timeout=0.4) == ""
+    assert time.monotonic() - started >= 0.4
+    assert receipt["callback_silence"]["last_document"] == ""
