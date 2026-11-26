@@ -1,6 +1,6 @@
 FROM python:3.12-slim-bookworm
 
-ENV PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1 HOME=/tmp TZ=America/Sao_Paulo
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 HOME=/tmp TZ=America/Sao_Paulo
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl xvfb fonts-liberation tzdata \
     && curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /tmp/chrome.deb \
     && apt-get install -y --no-install-recommends /tmp/chrome.deb \
@@ -21,6 +21,10 @@ RUN curl -fsSL 'https://apt.pop-os.org/release/pool/noble/fonts/2da23d5e76bf724c
     && rm -rf /var/lib/apt/lists/* /tmp/pop-fonts.deb /tmp/fonts-ubuntu.deb
 
 RUN apt-get update && apt-get install -y --no-install-recommends poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Playwright's bundled node links against libatomic, which slim does not ship.
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

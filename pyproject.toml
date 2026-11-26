@@ -23,7 +23,10 @@ inss-query = "inss.query:main"
 inss-extract = "inss.query:main"
 inss-browser-legacy = "inss.workflow:main"
 comprasnet-login = "comprasnet.workflow:main"
+dataprev-query = "dataprev.query:main"
+dataprev-flow = "dataprev.flow:main"
 inss-mcp = "inss.mcp_server:main"
+dataprev-mcp = "dataprev.mcp_server:main"
 inss-hosted = "inss.hosted:main"
 
 [tool.setuptools.packages.find]
@@ -31,3 +34,6 @@ where = ["src"]
 
 [dependency-groups]
 dev = ["pytest>=8", "httpx>=0.27,<1"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

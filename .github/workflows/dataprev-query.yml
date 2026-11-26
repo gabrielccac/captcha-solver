@@ -1,0 +1,81 @@
+name: CadÚnico - comprovante e consulta
+
+run-name: CadUnico ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Identificador opaco desta execução
+        required: false
+        default: manual
+        type: string
+      document:
+        description: Documento a baixar
+        required: false
+        type: choice
+        options:
+          - all
+          - comprovante
+          - consulta
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  query:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    environment: n8n-inss-query
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Instalar dependências
+        run: uv sync --extra hosted
+
+      - name: Conferir se o runner alcança o CadÚnico e o SSO
+        run: |
+          set -euo pipefail
+          for url in https://cadunico.dataprev.gov.br/                      https://cadunico.dataprev.gov.br/transacional/api/oauth2/authorization/gateway-transacional                      https://sso.acesso.gov.br/login; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 --tlsv1.2 --tls-max 1.2 "$url" || echo "erro")
+            echo "$url -> $code"
+          done
+
+      - name: Credenciar no gov.br e baixar os documentos
+        env:
+          GOVBR_CPF: ${{ secrets.SMOKE_GOVBR_CPF }}
+          GOVBR_PASSWORD: ${{ secrets.SMOKE_GOVBR_PASSWORD }}
+          OPENROUTER_API_KEY: ${{ secrets.SMOKE_OPENROUTER_API_KEY }}
+        run: uv run python -m dataprev.flow --out runs/dataprev --document "${{ inputs.document }}"
+
+      - name: Registrar o recibo sem dados pessoais
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, sys
+          path = pathlib.Path("runs/dataprev/receipt.json")
+          if not path.exists():
+              print("sem recibo: o fluxo não chegou a executar")
+              sys.exit(0)
+          data = json.loads(path.read_text(encoding="utf-8"))
+          resumo = {
+              "success": data.get("success"),
+              "code": data.get("code"),
+              "total_ms": data.get("total_ms"),
+              "documentos": {nome: {"bytes": info.get("size_bytes"), "http_status": info.get("http_status")}
+                             for nome, info in (data.get("documents") or {}).items()},
+              "erros": data.get("errors"),
+              "credenciamento": {
+                  "success": (data.get("credenciamento") or {}).get("success"),
+                  "identity_status": (data.get("credenciamento") or {}).get("identity_status"),
+                  "sso_reused": (data.get("credenciamento") or {}).get("sso_reused"),
+                  "phase_ms": (data.get("credenciamento") or {}).get("phase_ms"),
+                  "browser_error_type": (data.get("credenciamento") or {}).get("browser_error_type"),
+              },
+          }
+          print(json.dumps(resumo, indent=1, ensure_ascii=False))
+          PY

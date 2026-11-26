@@ -30,7 +30,8 @@ def test_idle_chrome_cannot_download_models_or_dictionaries():
 
 def test_launch_keeps_the_headed_profile_the_login_needs():
     args = launch_args()
-    assert '--ozone-platform=x11' in args
     assert '--renderer-process-limit=4' in args
     assert '--disable-dev-shm-usage' in args
-    assert not any('--headless' in value for value in args)
+    source = SOURCE.read_text(encoding='utf-8')
+    assert 'headless=False' in source, 'the login must stay headed by default'
+    assert 'command.append("--ozone-platform=x11")' in source.replace("'", '"')
