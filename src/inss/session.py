@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import requests
-from playwright.sync_api import Error as PlaywrightError
+from captcha.page_error import PageError as PlaywrightError
 
 from inss.concession import parse_concession_pdf
 

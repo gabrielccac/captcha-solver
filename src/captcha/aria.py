@@ -2,7 +2,7 @@
 import re
 import time
 
-from playwright.sync_api import Error as PlaywrightError
+from captcha.page_error import PageError as PlaywrightError
 
 from .interactions import DynamicInteractions
 

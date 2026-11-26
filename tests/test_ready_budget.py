@@ -15,3 +15,21 @@ def test_budget_is_configurable_and_ignores_bad_values(monkeypatch):
     assert ready_budget(1) == 20.0
     monkeypatch.setenv('INSS_TILE_READY_S', 'nonsense')
     assert ready_budget(0) == 8.0
+
+
+def test_reset_notice_is_ignored_when_the_frame_is_cross_origin():
+    """hCaptcha's challenge frame is cross-origin; reading it must never raise."""
+    from captcha.hcaptcha import reset_notice
+
+    class Frame:
+        def evaluate(self, js):
+            raise RuntimeError("Sandbox access violation")
+
+    assert reset_notice(Frame()) is False
+
+
+def test_reset_words_cover_both_locales():
+    from captcha.hcaptcha import RESET_JS
+
+    for phrase in ("tente novamente", "try again", "algo deu errado"):
+        assert phrase.split()[0] in RESET_JS.lower()

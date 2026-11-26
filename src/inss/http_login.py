@@ -3,6 +3,7 @@ import argparse
 from contextlib import ExitStack, redirect_stderr
 import io
 import json
+import os
 from pathlib import Path
 import socket
 import time
@@ -12,7 +13,10 @@ from urllib.parse import parse_qs, quote, urlsplit
 import uuid
 
 import requests
-from playwright.sync_api import Error as PlaywrightError, sync_playwright
+from playwright.sync_api import sync_playwright
+
+from captcha import cdp_page
+from captcha.page_error import PageError, PlaywrightError
 
 from auth.browser_captcha import adopt
 from auth.captcha import NullCaptcha
@@ -220,7 +224,6 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
             raise AuthError("fresh_http_session_required")
         with ExitStack() as resources:
             phase("browser_start")
-            pw = resources.enter_context(sync_playwright())
             profile = resources.enter_context(TemporaryDirectory(
                 prefix="govbr-http-", ignore_cleanup_errors=True))
             with socket.socket() as sock:
@@ -228,9 +231,23 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
                 port = sock.getsockname()[1]
             manager = ManagedBrowser(profile, cdp_port=port, quiet=True)
             resources.callback(manager.stop)
-            browser = pw.chromium.connect_over_cdp(manager.start(wait_ready=True))
+            # Chrome is driven by the raw CDP client: the Playwright driver is a
+            # Node process that cost 121 MB of a 600 MB run. It stays available
+            # behind INSS_PAGE_ENGINE=playwright.
+            raw_cdp = os.environ.get("INSS_PAGE_ENGINE", "cdp") != "playwright"
+            if raw_cdp:
+                browser = cdp_page.connect(manager.start(wait_ready=True))
+            else:
+                pw = resources.enter_context(sync_playwright())
+                browser = pw.chromium.connect_over_cdp(manager.start(wait_ready=True))
             resources.callback(browser.close)
-            page = browser.contexts[0].pages[0]
+            pages = browser.contexts[0].pages
+            if not pages and raw_cdp:
+                deadline = time.monotonic() + 10
+                while not pages and time.monotonic() < deadline:
+                    time.sleep(0.2)
+                    pages = browser.contexts[0].pages
+            page = pages[0]
             receipt["browser_version"] = browser.version
             vision_session=resources.enter_context(requests.Session())
             if batch_captcha:
@@ -272,9 +289,16 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
                         raise AuthError("captcha_challenge_missing")
                     page.wait_for_timeout(500)
                 done = False
-                for rnd in range(3):
+                # A wrong answer resets the challenge and costs two more rounds,
+                # so the budget is time-bounded rather than a fixed count.
+                max_rounds = int(os.environ.get("INSS_CAPTCHA_ROUNDS", "5") or 5)
+                captcha_deadline = time.monotonic() + float(
+                    os.environ.get("INSS_CAPTCHA_BUDGET_S", "90") or 90)
+                attempt = 0
+                while attempt < max_rounds and time.monotonic() < captcha_deadline:
                     if captured.captured_at is not None:
                         break
+                    attempt += 1
                     try:
                         with redirect_stderr(io.StringIO()):
                             timing={'interactions':interactions} if interactions is not None else {}
@@ -282,9 +306,9 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
                                 timing['vision_solver']=prefetched
                             else:
                                 timing['vision_session']=vision_session
-                            done, info = hcaptcha.solve_round(page, images, rnd, MODEL,
+                            done, info = hcaptcha.solve_round(page, images, attempt - 1, MODEL,
                                 "minimal", HANDOFF_SELECTOR, api_key=api_key, **timing)
-                    except PlaywrightError:
+                    except PageError:
                         if captured.captured_at is not None:
                             break
                         raise
@@ -301,6 +325,9 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
                         raise AuthError("solver_provider_error")
                     if captured.captured_at is not None or done:
                         break
+                    if hcaptcha.reset_notice(page):
+                        receipt["captcha_resets"] = receipt.get("captcha_resets", 0) + 1
+                        page.wait_for_timeout(700)
             if captured.captured_at is None and not done:
                 raise AuthError("captcha_unsolved")
             # A minted token can precede the callback POST; pump browser events first.
@@ -345,7 +372,7 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         raise AuthError(error.code) from None
     except requests.RequestException as error:
         raise AuthError(request_failure(error, receipt)) from None
-    except PlaywrightError as error:
+    except PageError as error:
         receipt["runtime_error_type"] = type(error).__name__
         raise AuthError("browser_error") from None
     except Exception as error:
@@ -400,7 +427,7 @@ def main():
             outcome["code"] = "env_file_missing"
         except requests.RequestException as error:
             outcome['code'] = request_failure(error, receipt)
-        except PlaywrightError as error:
+        except PageError as error:
             receipt["runtime_error_type"] = type(error).__name__
             outcome["code"] = "browser_error"
         except Exception as error:
