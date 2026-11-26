@@ -16,7 +16,9 @@ from urllib.parse import parse_qs, urlsplit
 
 CALLBACK_HOSTS = {"cadunico.dataprev.gov.br", "meucadunico.dataprev.gov.br",
                   "sso.acesso.gov.br"}
+APPLICATION_HOSTS = {"cadunico.dataprev.gov.br"}
 CALLBACK_PARAMS = {"error", "code"}
+REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 ACCESS_DENIED_ERRORS = {"access_denied", "login_required", "interaction_required",
                         "consent_required", "account_selection_required"}
 TRANSIENT_ERRORS = {"temporarily_unavailable", "server_error"}
@@ -79,22 +81,39 @@ def classify(url: str, status: int | None = None) -> Outcome | None:
 
 
 class CallbackWatch:
-    """Guarda o primeiro desfecho conclusivo visto nas respostas da página.
+    """Guarda o primeiro desfecho conclusivo e o que a página entregou.
 
-    O listener classifica na hora e retém só o ``Outcome``: a URL do callback,
-    que carrega ``code``/``state``, não fica guardada em lugar nenhum.
+    O listener classifica na hora e retém só o ``Outcome`` e dois booleanos de
+    percurso: se o gateway redirecionou com ``code``/``state`` e se o documento da
+    aplicação carregou. Com eles, um silêncio deixa de ser um mistério: sem o
+    redirecionamento a perda é do servidor, com ele a perda é do SPA.
     """
 
     def __init__(self):
         self.outcome: Outcome | None = None
+        self.redirect_seen = False
+        self.document_seen = False
 
     def observe(self, response) -> None:
-        if self.outcome is not None:
-            return
+        url = getattr(response, "url", "") or ""
+        status = getattr(response, "status", None)
         try:
-            outcome = classify(getattr(response, "url", ""),
-                               getattr(response, "status", None))
+            host = urlsplit(url).hostname
+            if (host in CALLBACK_HOSTS and status in REDIRECT_STATUSES
+                    and callback_params(url).keys() & CALLBACK_PARAMS):
+                self.redirect_seen = True
+            if (host in APPLICATION_HOSTS and status == 200
+                    and _resource_type(response) in ("", "document")):
+                self.document_seen = True
+            if self.outcome is not None:
+                return
+            outcome = classify(url, status)
         except (TypeError, ValueError, AttributeError):
             return
         if outcome is not None:
             self.outcome = outcome
+
+
+def _resource_type(response) -> str:
+    """Tipo do recurso quando o cliente informa (Playwright entrega 'document')."""
+    return getattr(getattr(response, "request", None), "resource_type", "")

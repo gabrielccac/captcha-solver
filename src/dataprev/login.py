@@ -146,6 +146,9 @@ def wait_for_token(page, receipt, timeout=WAIT_SECONDS, watch=None):
         time.sleep(POLL_SECONDS)
     events.append(callback.Outcome("silent", "callback_silent").event(
         (time.monotonic() - started) * 1000))
+    if watch is not None:
+        receipt["callback_silence"] = {"redirect_seen": watch.redirect_seen,
+                                      "document_seen": watch.document_seen}
     url = urlsplit(page.url)
     receipt["final_host"] = url.hostname or ""
     receipt["final_path"] = url.path

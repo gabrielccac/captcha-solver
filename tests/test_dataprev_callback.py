@@ -296,3 +296,48 @@ def test_repeated_transient_rounds_never_exceed_the_wait_budget(monkeypatch):
         assert error.value.code == "callback_temporarily_unavailable"
         assert pauses == [dataprev_login.POLL_SECONDS] * slices
         assert len(receipt["callback_events"]) == 1
+
+
+class Document:
+    """Resposta 200 de documento da aplicação, com o tipo de recurso do cliente."""
+
+    def __init__(self, url, status, resource_type="document"):
+        self.url = url
+        self.status = status
+        self.request = type("Request", (), {"resource_type": resource_type})()
+
+
+def test_the_watch_records_the_redirect_and_the_application_document():
+    watch = callback.CallbackWatch()
+    watch.observe(Document(f"{CALLBACK}?code={CODE}&state={STATE}", 302))
+    assert watch.redirect_seen is True
+    assert watch.document_seen is False
+    assert watch.outcome is None
+    watch.observe(Document(HOME, 200))
+    assert watch.document_seen is True
+
+
+def test_a_background_request_does_not_count_as_the_application_document():
+    watch = callback.CallbackWatch()
+    watch.observe(Document("https://cadunico.dataprev.gov.br/transacional/api/x", 200, "xhr"))
+    assert watch.document_seen is False
+
+
+@pytest.mark.parametrize("entregues,redirect,document", [
+    ([Document(f"{CALLBACK}?code={CODE}&state={STATE}", 302), Document(HOME, 200)], True, True),
+    ([Document(f"{CALLBACK}?code={CODE}&state={STATE}", 302)], True, False),
+    ([], False, False)])
+def test_silence_records_whether_the_gateway_redirected_and_the_page_loaded(monkeypatch,
+                                                                           entregues, redirect,
+                                                                           document):
+    quiet_login_failure(monkeypatch)
+    monkeypatch.setattr(dataprev_login.time, "sleep", lambda seconds: None)
+    page = Page()
+    watch = dataprev_login.callback_watch(page)
+    for response in entregues:
+        page.handlers["response"](response)
+    receipt = {}
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.02, watch=watch) == ""
+    assert receipt["callback_silence"] == {"redirect_seen": redirect, "document_seen": document}
+    assert receipt["callback_events"][0]["code"] == "callback_silent"
+    assert CODE not in json.dumps(receipt) and STATE not in json.dumps(receipt)
