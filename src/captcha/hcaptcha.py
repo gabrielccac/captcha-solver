@@ -26,6 +26,28 @@ STATE_JS = """(successSelector) => ({
   frames: document.querySelectorAll('iframe[src*="hcaptcha"]').length
 })"""
 VIEWPORT_JS = "() => ({width: innerWidth, height: innerHeight})"
+RESET_JS = r"""() => {
+  const words = [/tente\s+novamente/i, /tentar\s+novamente/i, /try\s+again/i,
+                 /please\s+try\s+again/i, /algo\s+deu\s+errado/i, /something\s+went\s+wrong/i];
+  const hit = (text) => words.some((r) => r.test(text || ''));
+  let found = false;
+  document.querySelectorAll('iframe[src*="hcaptcha"]').forEach((frame) => {
+    try {
+      const doc = frame.contentDocument;
+      if (doc && hit(doc.body && doc.body.innerText)) found = true;
+    } catch (error) { /* cross-origin: the frame's own text is not readable */ }
+  });
+  const body = document.body ? document.body.innerText : '';
+  return found || hit(body);
+}"""
+
+
+def reset_notice(page):
+    """True when the widget says the challenge restarted (a wrong answer resets it)."""
+    try:
+        return bool(page.evaluate(RESET_JS))
+    except Exception:
+        return False
 
 
 def log(msg):

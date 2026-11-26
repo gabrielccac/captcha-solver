@@ -8,7 +8,7 @@ Todas as execuções terminaram em `ok`.
 |---|---|
 | Tempo de parede | 26–39 s |
 | CPU | 21 s com teto de 1 núcleo, 42 s com 2 |
-| Memória de pico | 553–601 MB com as flags atuais; 650–752 MB antes delas |
+| Memória de pico | 423–456 MB dirigindo o Chrome por CDP; 553–601 MB pelo Playwright; 650–752 MB antes das flags de download |
 | Download | 2,4–4,8 MB por execução; 49–54 MB antes das flags |
 | Upload | ~1 MB |
 | Imagem | 1,79 GB |
@@ -57,3 +57,16 @@ Na branch `diag/captcha-run-lab`: `deploy/actions/mem_sample.py` amostra PSS por
 processo e `memory.stat`; `deploy/actions/idle_net.py` mede o download de um
 navegador ocioso; `deploy/actions/hosts_probe.py` lista hosts e bytes de uma
 página; `INSS_NET_ACCOUNT=1` grava `net_bytes` por host no recibo.
+
+## O driver do Playwright custa 121 MB
+
+O Playwright Python não fala CDP: ele sobe um processo Node que faz a ponte e
+que responde por 121 MB de um pico de ~600 MB. Dirigir o Chrome pelo cliente em
+`src/captcha/cdp_page.py` remove essa camada: mediana de **444 MB** contra 565 MB
+do Playwright em 12 execuções na VPS, e 423–456 MB depois do endurecimento, em 8
+execuções, com o login mais rápido (24–29 s contra 26–39 s). O caminho Playwright
+continua disponível com `INSS_PAGE_ENGINE=playwright`.
+
+O mesmo cliente economiza CPU em cada captura: decodificar o base64 do
+`screenshot` validando UTF-8 custava 479 ms por frame de 665 KB, contra 16 ms
+com `skip_utf8_validation=True`.
