@@ -60,6 +60,17 @@ Leitura do tree (nov/2026) mais medições de PSS no pico, base de 578 MB:
 - `--js-flags=--max-old-space-size=192`: 588 MB de pico. Janela de 900x700 em
   vez de 1280x900: 593 MB. Ambos aceitos no POST do captcha e ambos sem ganho.
 
+### Qual régua cada número usa
+
+As cifras deste documento são **memória anônima do cgroup**, a que um
+`docker run -m` enxerga: o Chrome, o Xvfb e o Python somados. Medido agora, na
+mesma execução, o pico é de 342 MB anônimos contra 582 MB de **PSS total** — a
+diferença é página file-backed das bibliotecas do Chrome (libchrome, fontes,
+ICU), que é compartilhada e não cresce com o uso. Comparar números de réguas
+diferentes produz uma regressão que não existe: 342 MB anônimos hoje contra os
+423–456 MB registrados em #30 estão na mesma faixa, já que aquela medição é da
+mesma régua e o total é o que pesa mais.
+
 A conta fecha com a distribuição do pico: renderers somam 707 MB de RSS (197 e
 179 MB das páginas do SSO, 138 MB do próprio UI do Chrome em
 `--top-chrome-webui`), utility 320 MB (109 MB no serviço de rede), browser
