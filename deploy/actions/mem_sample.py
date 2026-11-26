@@ -41,8 +41,9 @@ def memory_stat():
 
 
 out, stop = sys.argv[1], sys.argv[2]
+deadline = time.monotonic() + float(sys.argv[3] if len(sys.argv) > 3 else 120)
 rows = []
-while not os.path.exists(stop):
+while not os.path.exists(stop) and time.monotonic() < deadline:
     procs = {}
     for entry in os.listdir('/proc'):
         if not entry.isdigit():
