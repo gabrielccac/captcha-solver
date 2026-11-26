@@ -63,6 +63,23 @@ com motivo explícito, e o reenfileiramento por um novo despacho passa a ser a
 estratégia de recuperação. Com três despachos independentes, a disponibilidade
 esperada fica em torno de 96% (0,33³).
 
+## Repetição limitada
+
+Em faixa onde a recusa é probabilística, repetir na mesma execução é o que
+separa uma noite ruim de uma falha: no Hetzner a recusa cai no POST da senha e
+no POST do oauth, não no POST do captcha, e a página de recusa é do edge, então
+a senha nunca chegou à conta e uma sessão nova é legítima. `inss/auth_retry.py`
+limita essas repetições a `INSS_MAX_ATTEMPTS` (padrão 3) dentro de
+`INSS_RETRY_BUDGET_MS` (padrão 200s) e registra `rejection_retry` no recibo. O
+último GET de confirmação, que só acontece depois do token emitido, é repetido
+sem novo login — um travamento de 30s ali não custa mais uma autenticação.
+
+Medido no VPS (Chrome, egress Hetzner), três lotes de 20 execuções depois dos
+consertos locais: 16/20 com 4 recusas de edge e nenhuma falha nossa; 19/20 com 6
+recuperações pelo retry; 20/20 com 2 recuperações. A taxa de recusa por
+tentativa nesses lotes variou de 20% a 28% sem que a taxa por execução caísse,
+que é exatamente o que o retry compra.
+
 ## Como reproduzir
 
 O laboratório vive na branch `diag/captcha-run-lab`: `.github/workflows/diag-captcha.yml`
