@@ -258,6 +258,18 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
             phase("authorize")
             browser_login.goto_login(page)
             captured = CaptchaHandoff(native=transport == "native")
+            if os.environ.get("INSS_NET_ACCOUNT"):
+                def account(response):
+                    host = urlsplit(response.url).hostname or "?"
+                    try:
+                        sizes = response.request.sizes()
+                    except Exception:
+                        sizes = {}
+                    total = sizes.get("responseBodySize", 0) + sizes.get("responseHeadersSize", 0)
+                    per_host = receipt.setdefault("net_bytes", {})
+                    per_host[host] = per_host.get(host, 0) + total
+
+                page.on("response", account)
             allowed = os.environ.get("INSS_ALLOW_HOSTS", "")
             if allowed:
                 # Diagnostic: keep only the hosts the login actually needs.
