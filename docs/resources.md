@@ -40,6 +40,32 @@ memória reaparece em outro: `--disable-gpu` derruba o processo de GPU de 74 par
 não resolve. O Chromium é cego ao cgroup no Linux, então ele não se auto-poda —
 não adianta confiar no limite do container como sinal de pressão.
 
+### O que a fonte do Chromium já respondeu
+
+Leitura do tree (nov/2026) mais medições de PSS no pico, base de 578 MB:
+
+- `--enable-low-end-device-mode` não devolve memória. Ele troca os tetos de heap
+  (`gin/isolate_holder.cc` passa a RAM falsa ao V8, derrubando o old space de
+  4 GiB para 256 MiB) e faz `AmountOfTotalPhysicalMemory()` virar
+  `min(512 MiB, real)`, mas o que a página consome são dezenas de MB: nenhum MB
+  de RSS sai. O preço é fingerprint — `navigator.deviceMemory` cai de 8 para 0.5
+  e `performance.memory.jsHeapSizeLimit` de ~4,29e9 para ~2,68e8.
+- Pressão de memória não chega. `CreateMemoryPressureMonitor` existe no Linux,
+  mas `CreateDefaultSystemEvaluator` devolve `nullptr` fora de
+  Windows/Mac/ChromeOS, então não há produtor de sinal: a política de 100/50/0%
+  fica em 100% e nada purga cache neste login. `--memory-pressure-off` também
+  não existe mais no tree.
+- `--in-process-gpu`: 589 MB de PSS no pico contra 578 MB da base, com o login
+  aceito. Pior, descartado.
+- `--js-flags=--max-old-space-size=192`: 588 MB de pico. Janela de 900x700 em
+  vez de 1280x900: 593 MB. Ambos aceitos no POST do captcha e ambos sem ganho.
+
+A conta fecha com a distribuição do pico: renderers somam 707 MB de RSS (197 e
+179 MB das páginas do SSO, 138 MB do próprio UI do Chrome em
+`--top-chrome-webui`), utility 320 MB (109 MB no serviço de rede), browser
+212 MB e GPU 146 MB. O peso é a página do SSO somada à UI do navegador, não um
+processo que dê para enxugar por flag.
+
 ## O que funcionou: parar os downloads de fundo
 
 Um Chrome parado em `about:blank` baixa 42–50 MB em 30 s: 40 requisições a
