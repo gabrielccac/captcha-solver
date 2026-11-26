@@ -25,7 +25,7 @@ def test_recovers_on_third_attempt_without_replaying_a_password():
     assert output['auth_retry']['recovered']
 
 
-def test_upstream_rejection_keeps_the_existing_pre_password_retry_budget():
+def test_upstream_rejection_keeps_the_existing_retry_budget():
     first = result('upstream_request_rejected')
     first['receipt']['captcha_terminal'] = {
         'kind': 'unknown', 'public_error_signals': {'request_rejected': True}}
@@ -34,8 +34,19 @@ def test_upstream_rejection_keeps_the_existing_pre_password_retry_budget():
     assert run.call_count == 3 and output['success']
     assert [row['code'] for row in output['auth_retry']['history']] == [
         'upstream_request_rejected', 'read_timeout', 'ok']
-    assert output['pre_password_retry']['first_code'] == 'upstream_request_rejected'
-    assert 'captcha_retry' not in output
+    assert output['rejection_retry'] == {'first_worker_ms': 30_000, 'recovered': True}
+    assert 'captcha_retry' not in output and 'pre_password_retry' not in output
+
+
+@pytest.mark.parametrize('stage', ['http_password', 'http_oauth_redirect'])
+def test_rejection_after_the_password_post_still_gets_one_fresh_session(stage):
+    # The rejection page comes from the edge, so the account never saw the
+    # password: a new session may pass where the previous request was blocked.
+    first = result('upstream_request_rejected', stage, posted=1)
+    run = Mock(side_effect=[first, result('ok')])
+    output = authenticate_with_retry(run)
+    assert run.call_count == 2 and output['success']
+    assert output['rejection_retry'] == {'first_worker_ms': 30_000, 'recovered': True}
 
 
 def test_engine_failure_gets_a_fresh_challenge_and_stops_at_three():
@@ -53,8 +64,7 @@ def test_time_budget_prevents_starting_another_slow_attempt():
 
 
 @pytest.mark.parametrize('code,posted', [('invalid_credentials', 0), ('two_factor_required', 0),
-    ('govbr_interaction_required', 0), ('read_timeout', 1), ('captcha_http_not_accepted', 1),
-    ('upstream_request_rejected', 1)])
+    ('govbr_interaction_required', 0), ('read_timeout', 1), ('captcha_http_not_accepted', 1)])
 def test_nonretryable_results_do_not_repeat_authentication(code, posted):
     run = Mock(side_effect=lambda: result(code, posted=posted))
     authenticate_with_retry(run)

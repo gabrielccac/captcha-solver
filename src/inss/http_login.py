@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import socket
 import time
+import traceback
 from tempfile import TemporaryDirectory
 from urllib.parse import parse_qs, quote, urlsplit
 import uuid
@@ -21,6 +22,7 @@ from auth.page_diagnostics import is_upstream_rejection_page
 from captcha.browser import ManagedBrowser
 from captcha import hcaptcha
 from . import session as browser_login
+from .auth_retry import authenticate_with_retry
 from .http_errors import observe, request_failure
 
 PORTAL = "https://meu.inss.gov.br/"
@@ -83,11 +85,20 @@ def verify_api(session, code, cpf, receipt):
     if not isinstance(mi, str) or not mi:
         raise AuthError("mi_token_missing")
     headers["miToken"] = mi
-    with session.get(info_url, headers=headers, timeout=30, allow_redirects=False,
-                     stream=True) as verified:
-        receipt["authenticated_endpoint_http_status"] = verified.status_code
-        if verified.status_code != 200:
-            raise AuthError("authenticated_endpoint_failed", http_status=verified.status_code)
+    # The token is already issued, so a hung confirmation GET is free to repeat.
+    for attempt in (1, 2):
+        try:
+            with session.get(info_url, headers=headers, timeout=30, allow_redirects=False,
+                             stream=True) as verified:
+                receipt["authenticated_endpoint_http_status"] = verified.status_code
+                break
+        except requests.Timeout:
+            if attempt == 2:
+                raise
+            receipt["authenticated_endpoint_retry"] = {"timeout": attempt}
+    if receipt["authenticated_endpoint_http_status"] != 200:
+        raise AuthError("authenticated_endpoint_failed",
+                        http_status=receipt["authenticated_endpoint_http_status"])
     # Caller owns this session. Tokens stay in memory for subsequent API requests.
     session.headers.update(headers)
     receipt["api_session_verified"] = True
@@ -210,7 +221,8 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         with ExitStack() as resources:
             phase("browser_start")
             pw = resources.enter_context(sync_playwright())
-            profile = resources.enter_context(TemporaryDirectory(prefix="govbr-http-"))
+            profile = resources.enter_context(TemporaryDirectory(
+                prefix="govbr-http-", ignore_cleanup_errors=True))
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]
@@ -249,7 +261,8 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
             else:
                 browser_login.submit_cpf(page,masked)
             phase("captcha_engine")
-            with TemporaryDirectory(prefix="captcha-widget-") as images:
+            with TemporaryDirectory(prefix="captcha-widget-",
+                                    ignore_cleanup_errors=True) as images:
                 deadline = time.monotonic() + 25
                 while not hcaptcha.vis_modal(page) and not hcaptcha.page_state(page, HANDOFF_SELECTOR).get("done"):
                     failure = browser_login.login_failure(page)
@@ -332,9 +345,15 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
         raise AuthError(error.code) from None
     except requests.RequestException as error:
         raise AuthError(request_failure(error, receipt)) from None
-    except PlaywrightError:
+    except PlaywrightError as error:
+        receipt["runtime_error_type"] = type(error).__name__
         raise AuthError("browser_error") from None
-    except Exception:
+    except Exception as error:
+        receipt["runtime_error_type"] = type(error).__name__
+        receipt["runtime_error_errno"] = getattr(error, "errno", None)
+        frame = traceback.extract_tb(error.__traceback__)[-1:] if error.__traceback__ else []
+        receipt["runtime_error_at"] = (f"{os.path.basename(frame[0].filename)}:{frame[0].lineno}"
+                                       if frame else None)
         raise AuthError("login_runtime_error") from None
     finally:
         observer.__exit__(None, None, None)
@@ -360,25 +379,43 @@ def main():
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     receipt = {"success": False, "api_session_verified": False}
+
+    def authenticate():
+        # Each attempt gets a fresh session and receipt; the last one is reported.
+        receipt.clear()
+        receipt.update(success=False, api_session_verified=False)
+        started = time.monotonic()
+        outcome = {"success": False, "code": "login_runtime_error", "receipt": receipt}
+        try:
+            values = load_env_file(args.env_file)
+            cpf = "".join(c for c in values.get("GOVBR_CPF", "") if c in "0123456789")
+            with requests.Session() as session:
+                login(session, cpf, values.get("GOVBR_PASSWORD", ""),
+                      values.get("OPENROUTER_API_KEY", "").strip(), receipt=receipt,
+                      optimize_interactions=args.fast_interactions,batch_captcha=args.batch_captcha)
+            outcome.update(success=True, code="ok")
+        except (AuthError, browser_login.LoginError) as error:
+            outcome["code"] = error.code
+        except FileNotFoundError:
+            outcome["code"] = "env_file_missing"
+        except requests.RequestException as error:
+            outcome['code'] = request_failure(error, receipt)
+        except PlaywrightError as error:
+            receipt["runtime_error_type"] = type(error).__name__
+            outcome["code"] = "browser_error"
+        except Exception as error:
+            receipt["runtime_error_type"] = type(error).__name__
+        finally:
+            outcome["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+        return outcome
+
     try:
-        values = load_env_file(args.env_file)
-        cpf = "".join(c for c in values.get("GOVBR_CPF", "") if c in "0123456789")
-        with requests.Session() as session:
-            login(session, cpf, values.get("GOVBR_PASSWORD", ""),
-                  values.get("OPENROUTER_API_KEY", "").strip(), receipt=receipt,
-                  optimize_interactions=args.fast_interactions,batch_captcha=args.batch_captcha)
-    except (AuthError, browser_login.LoginError) as error:
-        receipt["code"] = error.code
-    except FileNotFoundError:
-        receipt["code"] = "env_file_missing"
-    except requests.RequestException as error:
-        receipt['code'] = request_failure(error, receipt)
-    except PlaywrightError:
-        receipt["code"] = "browser_error"
+        outcome = authenticate_with_retry(authenticate)
+        receipt["auth_retry"] = outcome["auth_retry"]
+        if not outcome["success"]:
+            receipt["code"] = outcome["code"]
     except KeyboardInterrupt:
         receipt["code"] = "cancelled"
-    except Exception:
-        receipt["code"] = "login_runtime_error"
     (args.out / "receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
     print(json.dumps({key: receipt[key] for key in ("success", "code")}))
     return 0 if receipt["success"] else 3

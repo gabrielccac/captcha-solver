@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import urlsplit
-from urllib.request import build_opener, HTTPRedirectHandler, Request
+from urllib.request import build_opener, HTTPRedirectHandler, Request, urlopen
 
 IMAGE = 'ghcr.io/gabrielccac/captcha-solver-webkit-smoke@sha256:62e6266bad61e67eaa62eb2ca6f69493b1801d9077e2e2b117693c61c28d5571'
 SECCOMP_SHA = '5f51dd940f5e35a653476ccaf30b3b06b485e3d2d790469d00aa10f0832d2433'
@@ -93,6 +93,28 @@ def envelope(operation, value):
     return result.stdout
 
 
+def egress():
+    """Resolve the runner's public identity; a lookup failure must never block the login."""
+    record = {'ip': None, 'org': None, 'country': None}
+    try:
+        request = Request('https://ipinfo.io/json', headers={'Accept': 'application/json',
+                                                            'User-Agent': 'captcha-solver-actions/1.0'})
+        with urlopen(request, timeout=8) as response:
+            record.update({key: value for key, value in json.loads(response.read(4096)).items()
+                           if key in record})
+    except Exception as error:
+        record['error'] = type(error).__name__
+    return record
+
+
+def blocked_egress(identity):
+    """GOV.BR's edge stalls or resets the single-use token POST from these networks."""
+    blocked = {value.strip().upper() for value in os.environ.get('INSS_BLOCKED_ASN', 'AS8075').split(',')
+               if value.strip()}
+    org = str(identity.get('org') or '').upper()
+    return (org.split(' ')[0] if org else '') in blocked, sorted(blocked)
+
+
 def summary(payload):
     validation = payload['validation']
     receipt = validation.get('receipt', {})
@@ -141,6 +163,15 @@ def main():
     started = time.monotonic()
     callback_url, sealed_result = '', None
     try:
+        if os.environ.get('INSS_EGRESS_GUARD') == '1':
+            identity = egress()
+            blocked, watched = blocked_egress(identity)
+            result['egress'] = identity
+            if blocked:
+                result.update(code='runner_egress_blocked', credential_status='undetermined',
+                              next_action='retry_later', retryable=True, blocked_asn=watched,
+                              result_class='technical_failure')
+                raise SystemExit(4)
         result_key = None
         if sealed:
             claim = json.loads(envelope('open', {'sealed': sealed, 'private_key': private_key,
@@ -227,6 +258,8 @@ def main():
             else:
                 (output / 'result.cms').write_bytes(encrypt(raw, recipient))
             result = report
+    except SystemExit:
+        pass
     except Exception as error:
         result['error_type'] = type(error).__name__
     finally:
@@ -251,7 +284,9 @@ def main():
         values.clear()
         print('SMOKE_RESULT ' + rendered, flush=True)
     completed = result['success'] and result.get('worker_returncode') == 0
-    return 0 if completed or result.get('result_class') == 'client_action_required' else 3
+    if completed or result.get('result_class') == 'client_action_required':
+        return 0
+    return 4 if result.get('code') == 'runner_egress_blocked' else 3
 
 
 if __name__ == '__main__':
