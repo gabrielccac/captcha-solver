@@ -258,6 +258,20 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
             phase("authorize")
             browser_login.goto_login(page)
             captured = CaptchaHandoff(native=transport == "native")
+            allowed = os.environ.get("INSS_ALLOW_HOSTS", "")
+            if allowed:
+                # Diagnostic: keep only the hosts the login actually needs.
+                suffixes = tuple(host.strip() for host in allowed.split(",") if host.strip())
+
+                def limit(route):
+                    host = urlsplit(route.request.url).hostname or ""
+                    if host.endswith(suffixes):
+                        route.continue_()
+                    else:
+                        receipt["blocked_requests"] = receipt.get("blocked_requests", 0) + 1
+                        route.abort()
+
+                page.route("**/*", limit)
             page.route("https://sso.acesso.gov.br/**", captured.intercept)
             phase("cpf")
             masked=f"{cpf[:3]}.{cpf[3:6]}.{cpf[6:9]}-{cpf[9:]}"
