@@ -102,6 +102,29 @@ def test_callback_is_exchanged_and_authenticated_endpoint_is_required():
     assert session.headers.update.call_args.args[0]["miToken"] == "fixture-mi"
 
 
+def test_hung_confirmation_get_is_repeated_without_a_new_login():
+    cpf = "00000000000"
+    payload = base64.urlsafe_b64encode(json.dumps({"sub": cpf}).encode()).decode().rstrip("=")
+    token = "fixture." + payload + ".fixture"
+    session = Mock()
+    responses = iter([Response({"access_token": token}), Response({"miToken": "fixture-mi"}),
+                      requests.ReadTimeout("fixture"), Response()])
+    def get(*args, **kwargs):
+        reply = next(responses)
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
+
+    session.get.side_effect = get
+    receipt = {}
+    verify_api(session, "fixture-code", cpf, receipt)
+    assert receipt["api_session_verified"] is True
+    assert receipt["authenticated_endpoint_retry"] == {"timeout": 1}
+    assert receipt["authenticated_endpoint_http_status"] == 200
+    assert session.get.call_count == 4
+    assert session.headers.update.call_args.args[0]["miToken"] == "fixture-mi"
+
+
 @pytest.mark.parametrize("failure,code", [(0, "code_exchange_failed"),
     (1, "userinfo_bootstrap_failed"), (2, "authenticated_endpoint_failed")])
 def test_api_failures_never_export_session_tokens(failure, code):
