@@ -34,6 +34,11 @@ PASSWORD_SELECTOR = 'input[type="password"]'
 MODEL = "meta/muse-spark-1.3-contributor"
 MAX_ROUNDS = 3
 WAIT_SECONDS = 40
+# O token chega entre 335 ms e 1,8 s em 12 execuções reais bem-sucedidas (mediana
+# 438 ms); em 6 falhas de silêncio ele nunca chegou. 15 s mantém 8x de margem
+# sobre o pior caso medido e reduz a falha silenciosa de 40 s para 15 s. A espera
+# aqui é outra: no gateway, o prazo cobre o carregamento do SSO, por isso segue 40 s.
+TOKEN_WAIT_SECONDS = 15
 POLL_SECONDS = 0.5
 TRANSIENT_RETRIES = 2
 TRANSIENT_WAIT_SECONDS = 5
@@ -109,7 +114,7 @@ def retry_transient(page, watch, outcome, deadline):
     return "", None
 
 
-def wait_for_token(page, receipt, timeout=WAIT_SECONDS, watch=None):
+def wait_for_token(page, receipt, timeout=TOKEN_WAIT_SECONDS, watch=None):
     """Espera o desfecho autenticado, que pode chegar por SSO silencioso.
 
     Erro definitivo no callback encerra a espera na hora, sem gastar o timeout.
@@ -148,7 +153,9 @@ def wait_for_token(page, receipt, timeout=WAIT_SECONDS, watch=None):
         (time.monotonic() - started) * 1000))
     if watch is not None:
         receipt["callback_silence"] = {"redirect_seen": watch.redirect_seen,
-                                      "document_seen": watch.document_seen}
+                                      "last_document": watch.last_document,
+                                      "errors": [list(pair) for pair in watch.errors],
+                                      "empty_200s": [list(item) for item in watch.empty_200s]}
     url = urlsplit(page.url)
     receipt["final_host"] = url.hostname or ""
     receipt["final_path"] = url.path

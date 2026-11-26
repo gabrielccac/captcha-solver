@@ -299,37 +299,58 @@ def test_repeated_transient_rounds_never_exceed_the_wait_budget(monkeypatch):
 
 
 class Document:
-    """Resposta 200 de documento da aplicação, com o tipo de recurso do cliente."""
+    """Resposta da aplicação, com tipo de recurso e Content-Length do cliente."""
 
-    def __init__(self, url, status, resource_type="document"):
+    def __init__(self, url, status, resource_type="document", content_length=None):
         self.url = url
         self.status = status
         self.request = type("Request", (), {"resource_type": resource_type})()
+        self.headers = {} if content_length is None else {"content-length": str(content_length)}
 
 
-def test_the_watch_records_the_redirect_and_the_application_document():
+def test_the_watch_records_the_redirect_and_the_last_application_document():
     watch = callback.CallbackWatch()
     watch.observe(Document(f"{CALLBACK}?code={CODE}&state={STATE}", 302))
     assert watch.redirect_seen is True
-    assert watch.document_seen is False
+    assert watch.last_document == ""
     assert watch.outcome is None
     watch.observe(Document(HOME, 200))
-    assert watch.document_seen is True
+    assert watch.last_document == "/"
 
 
 def test_a_background_request_does_not_count_as_the_application_document():
     watch = callback.CallbackWatch()
     watch.observe(Document("https://cadunico.dataprev.gov.br/transacional/api/x", 200, "xhr"))
-    assert watch.document_seen is False
+    assert watch.last_document == ""
+
+
+def test_the_watch_records_an_empty_200_with_its_route():
+    watch = callback.CallbackWatch()
+    watch.observe(Document("https://cadunico.dataprev.gov.br/transacional/login/oauth2/x",
+                           200, "fetch", 0))
+    watch.observe(Document(HOME, 200, "document", 1200))
+    assert watch.empty_200s == [("cadunico.dataprev.gov.br",
+                                 "/transacional/login/oauth2/x", "fetch")]
+
+
+def test_the_watch_keeps_only_host_and_status_of_errors():
+    watch = callback.CallbackWatch()
+    watch.observe(Document(f"{CALLBACK}?error=qualquer&state={STATE}", 500))
+    watch.observe(Document(f"{CALLBACK}?error=qualquer&state={STATE}", 500))
+    watch.observe(Document("https://cadunico.dataprev.gov.br/transacional/api/y", 404, "xhr"))
+    watch.observe(Document("https://cadunico.dataprev.gov.br/pdf/12345678901/comprovante", 404, "xhr"))
+    assert watch.errors == [("cadunico.dataprev.gov.br", 500,
+                             "/transacional/login/oauth2/code/gateway"),
+                            ("cadunico.dataprev.gov.br", 404,
+                             "/transacional/api/y")]
+    assert "12345678901" not in repr(watch.errors)
 
 
 @pytest.mark.parametrize("entregues,redirect,document", [
-    ([Document(f"{CALLBACK}?code={CODE}&state={STATE}", 302), Document(HOME, 200)], True, True),
-    ([Document(f"{CALLBACK}?code={CODE}&state={STATE}", 302)], True, False),
-    ([], False, False)])
-def test_silence_records_whether_the_gateway_redirected_and_the_page_loaded(monkeypatch,
-                                                                           entregues, redirect,
-                                                                           document):
+    ([Document(f"{CALLBACK}?code={CODE}&state={STATE}", 302), Document(HOME, 200)], True, "/"),
+    ([Document(f"{CALLBACK}?code={CODE}&state={STATE}", 302)], True, ""),
+    ([], False, "")])
+def test_silence_records_the_path_the_callback_took(monkeypatch, entregues, redirect, document):
     quiet_login_failure(monkeypatch)
     monkeypatch.setattr(dataprev_login.time, "sleep", lambda seconds: None)
     page = Page()
@@ -338,6 +359,8 @@ def test_silence_records_whether_the_gateway_redirected_and_the_page_loaded(monk
         page.handlers["response"](response)
     receipt = {}
     assert dataprev_login.wait_for_token(page, receipt, timeout=0.02, watch=watch) == ""
-    assert receipt["callback_silence"] == {"redirect_seen": redirect, "document_seen": document}
+    assert receipt["callback_silence"] == {"redirect_seen": redirect,
+                                           "last_document": document, "errors": [],
+                                           "empty_200s": []}
     assert receipt["callback_events"][0]["code"] == "callback_silent"
     assert CODE not in json.dumps(receipt) and STATE not in json.dumps(receipt)

@@ -11,6 +11,7 @@ resposta nunca são copiados para o recibo, porque nem chegam a ser guardados.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
@@ -83,28 +84,43 @@ def classify(url: str, status: int | None = None) -> Outcome | None:
 class CallbackWatch:
     """Guarda o primeiro desfecho conclusivo e o que a página entregou.
 
-    O listener classifica na hora e retém só o ``Outcome`` e dois booleanos de
-    percurso: se o gateway redirecionou com ``code``/``state`` e se o documento da
-    aplicação carregou. Com eles, um silêncio deixa de ser um mistério: sem o
-    redirecionamento a perda é do servidor, com ele a perda é do SPA.
+    O listener classifica na hora e retém só o ``Outcome`` e o percurso: se o
+    gateway redirecionou com ``code``/``state``, qual foi o último documento da
+    aplicação e quais respostas de erro apareceram (host, status e rota com
+    dígitos mascarados, sem query). Com isso um silêncio deixa de ser mistério:
+    sem redirecionamento a perda é do servidor; com ele, o SPA carregou e uma
+    resposta 200 sem corpo ou um erro pode explicar o token que não veio.
     """
 
     def __init__(self):
         self.outcome: Outcome | None = None
         self.redirect_seen = False
-        self.document_seen = False
+        self.last_document = ""
+        self.errors: list[tuple[str, int, str]] = []
+        self._error_keys: set[tuple[str, int]] = set()
+        self.empty_200s: list[tuple[str, str, str]] = []
 
     def observe(self, response) -> None:
         url = getattr(response, "url", "") or ""
         status = getattr(response, "status", None)
         try:
-            host = urlsplit(url).hostname
+            parts = urlsplit(url)
+            host = parts.hostname or ""
             if (host in CALLBACK_HOSTS and status in REDIRECT_STATUSES
                     and callback_params(url).keys() & CALLBACK_PARAMS):
                 self.redirect_seen = True
             if (host in APPLICATION_HOSTS and status == 200
                     and _resource_type(response) in ("", "document")):
-                self.document_seen = True
+                self.last_document = parts.path or "/"
+            if host in CALLBACK_HOSTS and isinstance(status, int) and status >= 400:
+                key = (host, status)
+                if key not in self._error_keys and len(self.errors) < 5:
+                    self._error_keys.add(key)
+                    self.errors.append((host, status, mask_digits(parts.path)))
+            if (status == 200 and _content_length(response) == 0
+                    and len(self.empty_200s) < 5):
+                self.empty_200s.append((host, mask_digits(parts.path),
+                                        _resource_type(response) or "?"))
             if self.outcome is not None:
                 return
             outcome = classify(url, status)
@@ -112,6 +128,24 @@ class CallbackWatch:
             return
         if outcome is not None:
             self.outcome = outcome
+
+
+def mask_digits(path: str) -> str:
+    """Caminho com dígitos mascarados: identifica a rota sem copiar CPF ou NB."""
+    return re.sub(r"\d{4,}", lambda match: "#" * len(match.group()), path or "")
+
+
+def _content_length(response):
+    """Content-Length declarado, quando existir; corpo ausente é '0'."""
+    headers = getattr(response, "headers", None) or {}
+    try:
+        value = headers.get("content-length")
+    except AttributeError:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _resource_type(response) -> str:
