@@ -287,7 +287,7 @@ def login(session, cpf, password, api_key, *, receipt=None, optimize_interaction
                         raise AuthError(failure.code)
                     if time.monotonic() > deadline:
                         raise AuthError("captcha_challenge_missing")
-                    page.wait_for_timeout(500)
+                    page.wait_for_timeout(150)
                 done = False
                 # A wrong answer resets the challenge and costs two more rounds,
                 # so the budget is time-bounded rather than a fixed count.
