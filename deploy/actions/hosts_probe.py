@@ -37,15 +37,18 @@ with tempfile.TemporaryDirectory(prefix='hosts-', ignore_cleanup_errors=True) as
                 from urllib.parse import urlsplit
                 host = urlsplit(response.url).hostname or '?'
                 try:
-                    size = int(response.headers.get('content-length') or 0)
-                except ValueError:
-                    size = 0
-                bytes_by_host[host] += size
+                    sizes = response.request.sizes()
+                except Exception:
+                    sizes = {}
+                bytes_by_host[host] += sizes.get('responseBodySize', 0) + sizes.get('responseHeadersSize', 0)
 
             page.route('**/*', on_request)
             page.on('response', on_response)
-            page.goto(target, wait_until='load', timeout=45000)
-            page.wait_for_timeout(8000)
+            try:
+                page.goto(target, wait_until='domcontentloaded', timeout=30000)
+            except Exception as error:
+                print('navegacao parcial:', str(error)[:120])
+            page.wait_for_timeout(9000)
         finally:
             manager.stop()
 
