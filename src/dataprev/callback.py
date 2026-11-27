@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+import time
 from urllib.parse import parse_qs, urlsplit
 
 CALLBACK_HOSTS = {"cadunico.dataprev.gov.br", "meucadunico.dataprev.gov.br",
@@ -72,7 +73,7 @@ def classify(url: str, status: int | None = None) -> Outcome | None:
         code = ("callback_access_denied" if error in ACCESS_DENIED_ERRORS
                 else "callback_rejected")
         return Outcome("terminal", code, status)
-    if status is None:
+    if status is None or "state" not in params:
         return None
     if status in TRANSIENT_STATUSES:
         return Outcome("transient", "callback_temporarily_unavailable", status)
@@ -96,6 +97,7 @@ class CallbackWatch:
         self.outcome: Outcome | None = None
         self.redirect_seen = False
         self.last_document = ""
+        self.document_at: float | None = None
         self.errors: list[tuple[str, int, str]] = []
         self._error_keys: set[tuple[str, int]] = set()
         self.empty_200s: list[tuple[str, str, str]] = []
@@ -110,8 +112,9 @@ class CallbackWatch:
                     and callback_params(url).keys() & CALLBACK_PARAMS):
                 self.redirect_seen = True
             if (host in APPLICATION_HOSTS and status == 200
-                    and _resource_type(response) in ("", "document")):
+                    and _resource_type(response) == "document"):
                 self.last_document = parts.path or "/"
+                self.document_at = time.monotonic()
             if host in CALLBACK_HOSTS and isinstance(status, int) and status >= 400:
                 key = (host, status, mask_digits(parts.path))
                 if key not in self._error_keys and len(self.errors) < 5:
@@ -126,7 +129,7 @@ class CallbackWatch:
             # Só navegação conclui: um XHR de fundo com code/error não é o retorno do
             # gateway e não pode abortar a espera do token.
             outcome = (classify(url, status)
-                       if _resource_type(response) in ("", "document") else None)
+                       if _resource_type(response) == "document" else None)
         except (TypeError, ValueError, AttributeError):
             return
         if outcome is not None:
@@ -139,7 +142,11 @@ def mask_digits(path: str) -> str:
 
 
 def _content_length(response):
-    """Content-Length declarado, quando existir; corpo ausente é '0'."""
+    """Content-Length declarado, quando existir.
+
+    Corpo vazio em chunked (sem o cabeçalho) fica fora do diagnóstico: só o caso
+    explícito ``Content-Length: 0`` é registrado.
+    """
     headers = getattr(response, "headers", None) or {}
     try:
         value = headers.get("content-length")

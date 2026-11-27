@@ -41,6 +41,7 @@ WAIT_SECONDS = 40
 # esperar além disso só gasta tempo. A espera do gateway segue 40 s, que cobre o SSO.
 TOKEN_WAIT_SECONDS = 8
 TOKEN_SLOW_SECONDS = 20
+TOKEN_AFTER_DOCUMENT_SECONDS = 4
 POLL_SECONDS = 0.5
 TRANSIENT_RETRIES = 2
 TRANSIENT_WAIT_SECONDS = 5
@@ -136,6 +137,9 @@ def wait_for_token(page, receipt, timeout=TOKEN_WAIT_SECONDS, watch=None,
     while time.monotonic() < deadline:
         token = application_token(page)
         if token:
+            if watch is not None and watch.document_at is not None:
+                receipt["token_after_document_ms"] = round(
+                    (time.monotonic() - watch.document_at) * 1000)
             return token
         try:
             failure = login_failure(page)
@@ -156,9 +160,11 @@ def wait_for_token(page, receipt, timeout=TOKEN_WAIT_SECONDS, watch=None,
                 raise AuthError(outcome.code, http_status=outcome.http_status)
             outcome = change
         time.sleep(POLL_SECONDS)
-        if (deadline == fast_deadline and time.monotonic() >= fast_deadline
-                and watch is not None and not watch.last_document):
+        if watch is None or watch.document_at is None:
             deadline = slow_deadline
+        else:
+            deadline = min(slow_deadline,
+                           max(fast_deadline, watch.document_at + TOKEN_AFTER_DOCUMENT_SECONDS))
     events.append(callback.Outcome("silent", "callback_silent").event(
         (time.monotonic() - started) * 1000))
     if watch is not None:
@@ -327,7 +333,9 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress
     """
     receipt = {} if receipt is None else receipt
     receipt.update(success=False, state_delegated=True, identity_status=None,
-                   phase_events=[], model=MODEL)
+                   phase_events=[], model=MODEL, callback_events=[])
+    receipt.pop("callback_silence", None)
+    receipt.pop("token_after_document_ms", None)
     receipt.pop("failure_stage", None)
     receipt.pop("failure_http_status", None)
     started = time.monotonic()

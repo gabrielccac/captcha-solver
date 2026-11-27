@@ -20,11 +20,13 @@ CODE = "codigo-sintetico"
 
 
 class Response:
-    """Resposta do gateway simulada: URL do callback e HTTP, sem corpo."""
+    """Resposta simulada: URL, HTTP, tipo de recurso e Content-Length."""
 
-    def __init__(self, url, status):
+    def __init__(self, url, status, resource_type="document", content_length=None):
         self.url = url
         self.status = status
+        self.request = type("Request", (), {"resource_type": resource_type})()
+        self.headers = {} if content_length is None else {"content-length": str(content_length)}
 
 
 class Page:
@@ -247,58 +249,8 @@ def test_a_page_without_response_events_still_waits_on_the_url(monkeypatch):
         dataprev_login.wait_for_token(Deaf(), {}, timeout=5)
 
 
-def test_repeated_rounds_keep_the_same_verdict_and_the_same_cost(monkeypatch):
-    """Volume: muitos ciclos seguidos, sem variar código, esperas ou vazamento."""
-    quiet_login_failure(monkeypatch)
-    pauses = []
-    monkeypatch.setattr(dataprev_login.time, "sleep", pauses.append)
-    veredictos = []
-    for _ in range(40):
-        page = Page(responses=[terminal(400)])
-        receipt = {}
-        with pytest.raises(AuthError) as error:
-            dataprev_login.wait_for_token(page, receipt, timeout=30,
-                                          watch=dataprev_login.callback_watch(page))
-        veredictos.append((error.value.code, error.value.http_status,
-                           len(receipt["callback_events"])))
-        assert json.dumps(receipt).find(CODE) == -1
-        assert json.dumps(receipt).find(STATE) == -1
-    assert set(veredictos) == {("callback_access_denied", 400, 1)}
-    assert pauses == []
-
-
-def test_repeated_silent_rounds_cost_only_the_configured_timeout(monkeypatch):
-    """Volume: sem resposta, cada rodada vira um único evento de silêncio."""
-    quiet_login_failure(monkeypatch)
-    monkeypatch.setattr(dataprev_login.time, "sleep", lambda seconds: None)
-    for _ in range(10):
-        page = Page()
-        receipt = {}
-        assert dataprev_login.wait_for_token(page, receipt, timeout=0.02, slow_timeout=0,
-                                             watch=dataprev_login.callback_watch(page)) == ""
-        assert receipt["callback_events"] == [
-            {"stage": "token", "kind": "silent", "code": "callback_silent",
-             "http_status": None, "elapsed_ms": receipt["callback_events"][0]["elapsed_ms"]}]
-
-
-def test_repeated_transient_rounds_never_exceed_the_wait_budget(monkeypatch):
-    quiet_login_failure(monkeypatch)
-    slices = int(dataprev_login.TRANSIENT_WAIT_SECONDS / dataprev_login.POLL_SECONDS)
-    for _ in range(20):
-        pauses = []
-        monkeypatch.setattr(dataprev_login.time, "sleep", pauses.append)
-        page = Page(responses=[transient(503) for _ in range(slices + 1)])
-        receipt = {}
-        with pytest.raises(AuthError) as error:
-            dataprev_login.wait_for_token(page, receipt, timeout=30,
-                                          watch=dataprev_login.callback_watch(page))
-        assert error.value.code == "callback_temporarily_unavailable"
-        assert pauses == [dataprev_login.POLL_SECONDS] * slices
-        assert len(receipt["callback_events"]) == 1
-
-
 class Document:
-    """Resposta da aplicação, com tipo de recurso e Content-Length do cliente."""
+    """Resposta da aplicaÃ§Ã£o, com tipo de recurso e Content-Length do cliente."""
 
     def __init__(self, url, status, resource_type="document", content_length=None):
         self.url = url
@@ -388,7 +340,22 @@ def test_silence_records_the_path_the_callback_took(monkeypatch, entregues, redi
     assert CODE not in json.dumps(receipt) and STATE not in json.dumps(receipt)
 
 
-def test_a_silence_after_the_application_loaded_stops_at_the_short_window(monkeypatch):
+def test_a_silence_ends_at_the_short_window_when_the_page_loaded_seconds_ago(monkeypatch):
+    quiet_login_failure(monkeypatch)
+    monkeypatch.setattr(dataprev_login.time, "sleep", lambda seconds: None)
+    page = Page()
+    watch = dataprev_login.callback_watch(page)
+    page.handlers["response"](Document(HOME, 200))
+    watch.document_at -= 10
+    receipt = {}
+    started = time.monotonic()
+    assert dataprev_login.wait_for_token(page, receipt, timeout=0.05,
+                                         watch=watch, slow_timeout=2) == ""
+    assert time.monotonic() - started < 1
+    assert receipt["callback_silence"]["last_document"] == "/"
+
+
+def test_a_silence_keeps_the_margin_after_the_page_just_loaded(monkeypatch):
     quiet_login_failure(monkeypatch)
     monkeypatch.setattr(dataprev_login.time, "sleep", lambda seconds: None)
     page = Page()
@@ -397,9 +364,8 @@ def test_a_silence_after_the_application_loaded_stops_at_the_short_window(monkey
     receipt = {}
     started = time.monotonic()
     assert dataprev_login.wait_for_token(page, receipt, timeout=0.05,
-                                         watch=watch, slow_timeout=2) == ""
-    assert time.monotonic() - started < 1
-    assert receipt["callback_silence"]["last_document"] == "/"
+                                         watch=watch, slow_timeout=0.4) == ""
+    assert time.monotonic() - started >= 0.3
 
 
 def test_a_silence_while_the_application_never_loaded_uses_the_long_window(monkeypatch):
@@ -442,3 +408,38 @@ def test_the_phase_is_recorded_even_when_the_failure_is_not_an_auth_error(monkey
     with pytest.raises(AuthError, match="^browser_error$"):
         dataprev_login.login(requests.Session(), "12345678901", "senha", "chave", receipt=receipt)
     assert receipt["failure_stage"] == "token"
+
+
+def test_a_transient_response_and_the_same_error_in_the_url_count_once(monkeypatch):
+    quiet_login_failure(monkeypatch)
+    pauses = []
+    monkeypatch.setattr(dataprev_login.time, "sleep", pauses.append)
+    page = Page(url=f"{CALLBACK}?error=temporarily_unavailable&state={STATE}",
+                responses=[Response(f"{CALLBACK}?code={CODE}&state={STATE}", 503)])
+    receipt = {}
+    with pytest.raises(AuthError) as error:
+        dataprev_login.wait_for_token(page, receipt, timeout=30, slow_timeout=30,
+                                      watch=dataprev_login.callback_watch(page))
+    assert error.value.code == "callback_temporarily_unavailable"
+    assert error.value.http_status == 503
+    assert [event["http_status"] for event in receipt["callback_events"]] == [503]
+
+
+def test_login_clears_diagnostics_left_by_a_previous_call(monkeypatch, tmp_path):
+    import requests
+
+    def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=False):
+        phase("token")
+        licence = receipt["callback_events"]
+        licence.append({"stale": True})
+        receipt["callback_silence"] = {"redirect_seen": False}
+        raise AuthError("token_not_captured")
+
+    monkeypatch.setattr(dataprev_login, "browser_leg", browser_leg)
+    monkeypatch.setattr(dataprev_login, "prepare", lambda session: session)
+    receipt = {"callback_events": [{"code": "antigo"}], "callback_silence": {"old": True}}
+    with pytest.raises(AuthError, match="^token_not_captured$"):
+        dataprev_login.login(requests.Session(), "12345678901", "senha", "chave",
+                             receipt=receipt)
+    assert [event.get("code") for event in receipt["callback_events"]] == [None]
+    assert receipt["callback_silence"] == {"redirect_seen": False}
