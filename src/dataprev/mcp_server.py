@@ -31,6 +31,7 @@ RECOVERABLE = CREDENTIAL_CODES | {
     "invalid_cpf_format", "password_missing_in_env", "solver_key_missing", "solver_provider_error",
     "browser_error", "captcha_challenge_missing", "captcha_not_accepted",
     "captcha_selection_not_confirmed", "login_page_unrecognized", "token_not_captured",
+    "callback_access_denied", "callback_rejected", "callback_temporarily_unavailable",
     "token_expired", "token_claims_unreadable", "token_wrong_audience", "identity_failed",
     "identity_mismatch", "dataprev_login_runtime_error", "fresh_http_session_required",
 }
@@ -131,7 +132,8 @@ def _credenciamento(receipt: dict) -> dict:
     source = receipt.get("credenciamento") or {}
     return {key: source.get(key) for key in
             ("sso_reused", "consent_clicked", "identity_status", "browser_error_type",
-             "runtime_error_type", "failure_stage", "final_host")
+             "runtime_error_type", "failure_stage", "final_host", "callback_silence",
+             "callback_events")
             if source.get(key) is not None} | {"phase_ms": source.get("phase_ms")}
 
 

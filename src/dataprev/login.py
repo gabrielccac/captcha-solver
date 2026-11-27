@@ -21,6 +21,7 @@ from captcha import hcaptcha
 from captcha.browser import ManagedBrowser, _x11 as _x11_display
 from inss.http_errors import observe, request_failure
 from inss.session import login_failure, submit_cpf, submit_password
+from . import callback
 from .client import DataprevClient, ServiceError, claims, prepare
 
 PORTAL = "https://cadunico.dataprev.gov.br/"
@@ -33,6 +34,17 @@ PASSWORD_SELECTOR = 'input[type="password"]'
 MODEL = "meta/muse-spark-1.3-contributor"
 MAX_ROUNDS = 3
 WAIT_SECONDS = 40
+# Em 18 execuções reais bem-sucedidas o token chegou entre 335 ms e 1,8 s (mediana
+# 548 ms); nas falhas silenciosas ele nunca veio. A janela curta é 8 s — 4,4x o
+# pior caso medido — e só é esticada para 20 s enquanto a aplicação ainda não
+# carregou: nas falhas medidas o documento já estava em "/" e o token não veio, então
+# esperar além disso só gasta tempo. A espera do gateway segue 40 s, que cobre o SSO.
+TOKEN_WAIT_SECONDS = 8
+TOKEN_SLOW_SECONDS = 20
+TOKEN_AFTER_DOCUMENT_SECONDS = 4
+POLL_SECONDS = 0.5
+TRANSIENT_RETRIES = 2
+TRANSIENT_WAIT_SECONDS = 5
 
 
 def fragment_params(fragment):
@@ -73,12 +85,61 @@ def account_or_consent(page):
         return ""
 
 
-def wait_for_token(page, receipt, timeout=WAIT_SECONDS):
-    """Espera o desfecho autenticado, que pode chegar por SSO silencioso."""
-    deadline = time.monotonic() + timeout
+def callback_outcome(page, watch=None):
+    """Desfecho conclusivo do callback: o da resposta observada ou o da URL atual."""
+    if watch is not None and watch.outcome is not None:
+        return watch.outcome
+    try:
+        return callback.classify(page.url)
+    except PlaywrightError:
+        return None
+
+
+def retry_transient(page, watch, outcome, deadline):
+    """Espera uma resposta nova quando o gateway sinaliza falha passageira.
+
+    A espera é curta e limitada: se o retorno não mudar, quem insiste é o
+    ``--retry`` do fluxo, com nova autorização. Devolve o token que aparecer e o
+    desfecho novo, quando houver.
+    """
+    if watch is not None:
+        watch.outcome = None
+    for _ in range(int(TRANSIENT_WAIT_SECONDS / POLL_SECONDS)):
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(POLL_SECONDS)
+        token = application_token(page)
+        if token:
+            return token, None
+        change = callback_outcome(page, watch)
+        if change is not None and change != outcome and (
+                change.http_status is not None or change.code != outcome.code):
+            return "", change
+    return "", None
+
+
+def wait_for_token(page, receipt, timeout=TOKEN_WAIT_SECONDS, watch=None,
+                   slow_timeout=TOKEN_SLOW_SECONDS):
+    """Espera o desfecho autenticado, que pode chegar por SSO silencioso.
+
+    Erro definitivo no callback encerra a espera na hora, sem gastar o timeout.
+    Falha passageira sinalizada ganha uma espera curta por uma resposta nova e,
+    se nada mudar, também encerra. No silêncio — nenhum callback, nenhuma
+    resposta — vale a janela curta; ela só cresce enquanto a aplicação ainda não
+    carregou, porque depois disso não há o que ler.
+    """
+    started = time.monotonic()
+    fast_deadline = started + timeout
+    slow_deadline = started + max(slow_timeout, timeout)
+    deadline = fast_deadline
+    retries = TRANSIENT_RETRIES
+    events = receipt.setdefault("callback_events", [])
     while time.monotonic() < deadline:
         token = application_token(page)
         if token:
+            if watch is not None and watch.document_at is not None:
+                receipt["token_after_document_ms"] = round(
+                    (time.monotonic() - watch.document_at) * 1000)
             return token
         try:
             failure = login_failure(page)
@@ -86,7 +147,31 @@ def wait_for_token(page, receipt, timeout=WAIT_SECONDS):
             failure = None
         if failure:
             raise AuthError(failure.code, http_status=getattr(failure, "status", None))
-        time.sleep(0.5)
+        outcome = callback_outcome(page, watch)
+        while outcome is not None:
+            events.append(outcome.event((time.monotonic() - started) * 1000))
+            if outcome.kind == "terminal" or not retries:
+                raise AuthError(outcome.code, http_status=outcome.http_status)
+            retries -= 1
+            token, change = retry_transient(page, watch, outcome, slow_deadline)
+            if token:
+                return token
+            if change is None:
+                raise AuthError(outcome.code, http_status=outcome.http_status)
+            outcome = change
+        time.sleep(POLL_SECONDS)
+        if watch is None or watch.document_at is None:
+            deadline = slow_deadline
+        else:
+            deadline = min(slow_deadline,
+                           max(fast_deadline, watch.document_at + TOKEN_AFTER_DOCUMENT_SECONDS))
+    events.append(callback.Outcome("silent", "callback_silent").event(
+        (time.monotonic() - started) * 1000))
+    if watch is not None:
+        receipt["callback_silence"] = {"redirect_seen": watch.redirect_seen,
+                                      "last_document": watch.last_document,
+                                      "errors": watch.errors,
+                                      "empty_200s": watch.empty_200s}
     url = urlsplit(page.url)
     receipt["final_host"] = url.hostname or ""
     receipt["final_path"] = url.path
@@ -118,6 +203,16 @@ def wait_outcome(page, receipt, timeout=WAIT_SECONDS):
         time.sleep(0.5)
     receipt["final_host"] = urlsplit(page.url).hostname or ""
     return "unknown", ""
+
+
+def callback_watch(page):
+    """Escuta as respostas do callback; sem eventos na página sobra a leitura da URL."""
+    watch = callback.CallbackWatch()
+    try:
+        page.on("response", watch.observe)
+    except PlaywrightError:
+        return None
+    return watch
 
 
 def browser_source_label(headless=False):
@@ -184,6 +279,7 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=Fal
             if not page.query_selector(PASSWORD_SELECTOR):
                 raise AuthError("captcha_not_accepted")
         phase("password")
+        watch = callback_watch(page)
         submit_password(page, password, APPLICATION_HOST)
 
         try:
@@ -194,7 +290,7 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=Fal
         except PlaywrightError:
             pass
         phase("token")
-        token = wait_for_token(page, receipt)
+        token = wait_for_token(page, receipt, watch=watch)
         if not token:
             raise AuthError("token_not_captured")
         return token
@@ -237,7 +333,9 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress
     """
     receipt = {} if receipt is None else receipt
     receipt.update(success=False, state_delegated=True, identity_status=None,
-                   phase_events=[], model=MODEL)
+                   phase_events=[], model=MODEL, callback_events=[])
+    receipt.pop("callback_silence", None)
+    receipt.pop("token_after_document_ms", None)
     receipt.pop("failure_stage", None)
     receipt.pop("failure_http_status", None)
     started = time.monotonic()
@@ -268,9 +366,6 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress
         receipt.update(success=True, code="ok")
         return receipt
     except AuthError as error:
-        events = receipt["phase_events"]
-        if events:
-            receipt["failure_stage"] = events[-1]["phase"]
         if error.http_status is not None:
             receipt["failure_http_status"] = error.http_status
         receipt["code"] = error.code
@@ -290,5 +385,7 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress
         observer.__exit__(None, None, None)
         receipt["elapsed_ms"] = round((time.monotonic() - started) * 1000)
         events = receipt["phase_events"]
+        if receipt.get("code") != "ok" and events:
+            receipt.setdefault("failure_stage", events[-1]["phase"])
         receipt["phase_ms"] = {event["phase"]: (events[i + 1]["elapsed_ms"] if i + 1 < len(events)
             else receipt["elapsed_ms"]) - event["elapsed_ms"] for i, event in enumerate(events)}
