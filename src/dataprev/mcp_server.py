@@ -132,7 +132,7 @@ def _credenciamento(receipt: dict) -> dict:
     source = receipt.get("credenciamento") or {}
     return {key: source.get(key) for key in
             ("sso_reused", "consent_clicked", "identity_status", "browser_error_type",
-             "runtime_error_type", "failure_stage", "final_host")
+             "runtime_error_type", "failure_stage", "final_host", "callback_silence")
             if source.get(key) is not None} | {"phase_ms": source.get("phase_ms")}
 
 

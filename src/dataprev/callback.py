@@ -113,17 +113,20 @@ class CallbackWatch:
                     and _resource_type(response) in ("", "document")):
                 self.last_document = parts.path or "/"
             if host in CALLBACK_HOSTS and isinstance(status, int) and status >= 400:
-                key = (host, status)
+                key = (host, status, mask_digits(parts.path))
                 if key not in self._error_keys and len(self.errors) < 5:
                     self._error_keys.add(key)
-                    self.errors.append((host, status, mask_digits(parts.path)))
-            if (status == 200 and _content_length(response) == 0
+                    self.errors.append(key)
+            if (host in CALLBACK_HOSTS and status == 200 and _content_length(response) == 0
                     and len(self.empty_200s) < 5):
                 self.empty_200s.append((host, mask_digits(parts.path),
                                         _resource_type(response) or "?"))
             if self.outcome is not None:
                 return
-            outcome = classify(url, status)
+            # Só navegação conclui: um XHR de fundo com code/error não é o retorno do
+            # gateway e não pode abortar a espera do token.
+            outcome = (classify(url, status)
+                       if _resource_type(response) in ("", "document") else None)
         except (TypeError, ValueError, AttributeError):
             return
         if outcome is not None:
@@ -132,7 +135,7 @@ class CallbackWatch:
 
 def mask_digits(path: str) -> str:
     """Caminho com dígitos mascarados: identifica a rota sem copiar CPF ou NB."""
-    return re.sub(r"\d{4,}", lambda match: "#" * len(match.group()), path or "")
+    return re.sub(r"\d", "#", path or "")
 
 
 def _content_length(response):

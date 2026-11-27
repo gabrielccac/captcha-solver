@@ -111,7 +111,8 @@ def retry_transient(page, watch, outcome, deadline):
         if token:
             return token, None
         change = callback_outcome(page, watch)
-        if change is not None and change != outcome:
+        if change is not None and change != outcome and (
+                change.http_status is not None or change.code != outcome.code):
             return "", change
     return "", None
 
@@ -148,7 +149,7 @@ def wait_for_token(page, receipt, timeout=TOKEN_WAIT_SECONDS, watch=None,
             if outcome.kind == "terminal" or not retries:
                 raise AuthError(outcome.code, http_status=outcome.http_status)
             retries -= 1
-            token, change = retry_transient(page, watch, outcome, deadline)
+            token, change = retry_transient(page, watch, outcome, slow_deadline)
             if token:
                 return token
             if change is None:
@@ -163,8 +164,8 @@ def wait_for_token(page, receipt, timeout=TOKEN_WAIT_SECONDS, watch=None,
     if watch is not None:
         receipt["callback_silence"] = {"redirect_seen": watch.redirect_seen,
                                       "last_document": watch.last_document,
-                                      "errors": [list(pair) for pair in watch.errors],
-                                      "empty_200s": [list(item) for item in watch.empty_200s]}
+                                      "errors": watch.errors,
+                                      "empty_200s": watch.empty_200s}
     url = urlsplit(page.url)
     receipt["final_host"] = url.hostname or ""
     receipt["final_path"] = url.path
@@ -199,12 +200,12 @@ def wait_outcome(page, receipt, timeout=WAIT_SECONDS):
 
 
 def callback_watch(page):
-    """Escuta as respostas do callback; sem eventos na página, sobra a URL."""
+    """Escuta as respostas do callback; sem eventos na página sobra a leitura da URL."""
     watch = callback.CallbackWatch()
     try:
         page.on("response", watch.observe)
     except PlaywrightError:
-        pass
+        return None
     return watch
 
 
@@ -231,7 +232,6 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=Fal
             receipt["cdp_port"] = manager.cdp_port
             resources.callback(browser.close)
         page = browser.contexts[0].pages[0]
-        watch = callback_watch(page)
         receipt["browser_version"] = browser.version
         phase("gateway")
         page.goto(START, wait_until="domcontentloaded", timeout=45000)
@@ -273,6 +273,7 @@ def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=Fal
             if not page.query_selector(PASSWORD_SELECTOR):
                 raise AuthError("captcha_not_accepted")
         phase("password")
+        watch = callback_watch(page)
         submit_password(page, password, APPLICATION_HOST)
 
         try:
@@ -357,9 +358,6 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress
         receipt.update(success=True, code="ok")
         return receipt
     except AuthError as error:
-        events = receipt["phase_events"]
-        if events:
-            receipt["failure_stage"] = events[-1]["phase"]
         if error.http_status is not None:
             receipt["failure_http_status"] = error.http_status
         receipt["code"] = error.code
@@ -379,5 +377,7 @@ def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress
         observer.__exit__(None, None, None)
         receipt["elapsed_ms"] = round((time.monotonic() - started) * 1000)
         events = receipt["phase_events"]
+        if receipt.get("code") != "ok" and events:
+            receipt.setdefault("failure_stage", events[-1]["phase"])
         receipt["phase_ms"] = {event["phase"]: (events[i + 1]["elapsed_ms"] if i + 1 < len(events)
             else receipt["elapsed_ms"]) - event["elapsed_ms"] for i, event in enumerate(events)}

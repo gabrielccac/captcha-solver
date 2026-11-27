@@ -242,10 +242,9 @@ def test_a_page_without_response_events_still_waits_on_the_url(monkeypatch):
         def evaluate(self, script):
             return ""
 
-    watch = dataprev_login.callback_watch(Deaf())
-    assert watch.outcome is None
+    assert dataprev_login.callback_watch(Deaf()) is None
     with pytest.raises(AuthError, match="^callback_access_denied$"):
-        dataprev_login.wait_for_token(Deaf(), {}, timeout=5, watch=watch)
+        dataprev_login.wait_for_token(Deaf(), {}, timeout=5)
 
 
 def test_repeated_rounds_keep_the_same_verdict_and_the_same_cost(monkeypatch):
@@ -308,6 +307,12 @@ class Document:
         self.headers = {} if content_length is None else {"content-length": str(content_length)}
 
 
+def test_a_background_request_with_code_does_not_conclude_the_wait():
+    watch = callback.CallbackWatch()
+    watch.observe(Document(f"{CALLBACK}?code={CODE}&state={STATE}", 401, "xhr"))
+    assert watch.outcome is None
+
+
 def test_the_watch_records_the_redirect_and_the_last_application_document():
     watch = callback.CallbackWatch()
     watch.observe(Document(f"{CALLBACK}?code={CODE}&state={STATE}", 302))
@@ -330,7 +335,20 @@ def test_the_watch_records_an_empty_200_with_its_route():
                            200, "fetch", 0))
     watch.observe(Document(HOME, 200, "document", 1200))
     assert watch.empty_200s == [("cadunico.dataprev.gov.br",
-                                 "/transacional/login/oauth2/x", "fetch")]
+                                 "/transacional/login/oauth#/x", "fetch")]
+
+
+def test_a_formatted_cpf_in_the_route_is_masked():
+    watch = callback.CallbackWatch()
+    watch.observe(Document("https://cadunico.dataprev.gov.br/pdf/123.456.789-01/x", 500, "xhr"))
+    assert ("#" not in "") is True
+    assert "123.456.789-01" not in repr(watch.errors)
+
+
+def test_empty_200_from_another_host_is_not_recorded():
+    watch = callback.CallbackWatch()
+    watch.observe(Document("https://api.hcaptcha.com/checksiteconfig", 200, "fetch", 0))
+    assert watch.empty_200s == []
 
 
 def test_the_watch_keeps_only_host_and_status_of_errors():
@@ -338,11 +356,14 @@ def test_the_watch_keeps_only_host_and_status_of_errors():
     watch.observe(Document(f"{CALLBACK}?error=qualquer&state={STATE}", 500))
     watch.observe(Document(f"{CALLBACK}?error=qualquer&state={STATE}", 500))
     watch.observe(Document("https://cadunico.dataprev.gov.br/transacional/api/y", 404, "xhr"))
+    watch.observe(Document("https://cadunico.dataprev.gov.br/transacional/api/y", 404, "xhr"))
     watch.observe(Document("https://cadunico.dataprev.gov.br/pdf/12345678901/comprovante", 404, "xhr"))
     assert watch.errors == [("cadunico.dataprev.gov.br", 500,
-                             "/transacional/login/oauth2/code/gateway"),
+                             "/transacional/login/oauth#/code/gateway"),
                             ("cadunico.dataprev.gov.br", 404,
-                             "/transacional/api/y")]
+                             "/transacional/api/y"),
+                            ("cadunico.dataprev.gov.br", 404,
+                             "/pdf/###########/comprovante")]
     assert "12345678901" not in repr(watch.errors)
 
 
@@ -392,3 +413,32 @@ def test_a_silence_while_the_application_never_loaded_uses_the_long_window(monke
                                          watch=watch, slow_timeout=0.4) == ""
     assert time.monotonic() - started >= 0.4
     assert receipt["callback_silence"]["last_document"] == ""
+
+
+def test_a_transient_response_keeps_its_http_status_in_the_error(monkeypatch):
+    quiet_login_failure(monkeypatch)
+    monkeypatch.setattr(dataprev_login.time, "sleep", lambda seconds: None)
+    page = Page(url=f"{CALLBACK}?error=temporarily_unavailable&state={STATE}")
+    receipt = {}
+    with pytest.raises(AuthError) as error:
+        dataprev_login.wait_for_token(page, receipt, timeout=30, slow_timeout=30,
+                                      watch=dataprev_login.callback_watch(page))
+    assert error.value.http_status is None
+    assert [event["http_status"] for event in receipt["callback_events"]] == [None]
+
+
+def test_the_phase_is_recorded_even_when_the_failure_is_not_an_auth_error(monkeypatch):
+    from playwright.sync_api import Error as PlaywrightError
+
+    def browser_leg(cpf, password, api_key, receipt, phase, cdp_url="", headless=False):
+        phase("browser_start")
+        phase("token")
+        raise PlaywrightError("página fechou")
+
+    monkeypatch.setattr(dataprev_login, "browser_leg", browser_leg)
+    monkeypatch.setattr(dataprev_login, "prepare", lambda session: session)
+    import requests
+    receipt = {}
+    with pytest.raises(AuthError, match="^browser_error$"):
+        dataprev_login.login(requests.Session(), "12345678901", "senha", "chave", receipt=receipt)
+    assert receipt["failure_stage"] == "token"
