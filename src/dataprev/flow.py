@@ -36,11 +36,21 @@ def credentials(values):
     return cpf, values["GOVBR_PASSWORD"], values["OPENROUTER_API_KEY"]
 
 
+# Medido em 55 execuções reais com dados reais: a falha dominante é externa e
+# passageira — silêncio do portal no token (26%), captcha que não emite token (9%),
+# resposta vazia do upstream (7%) e state do gov.br (9%). Cada tentativa abre uma
+# sessão nova, então repetir é o que converte essas falhas em documento, ao custo
+# de outro hCaptcha e de cerca de 90 segundos.
+RETRY_ATTEMPTS = 2
+RETRY_WAIT_SECONDS = 10
+
 TRANSIENT_CODES = {
     "token_not_captured", "captcha_not_accepted", "captcha_selection_not_confirmed",
     "captcha_challenge_missing", "browser_error", "dataprev_login_runtime_error",
     "upstream_empty_response", "upstream_invalid_json", "session_expired", "not_authorized",
     "identity_failed", "identity_unparsed", "callback_temporarily_unavailable",
+    "connection_error", "read_timeout", "connect_timeout", "request_timeout",
+    "incomplete_http_response",
 }
 
 
@@ -105,9 +115,9 @@ def main():
     ap.add_argument("--cdp-url", help="Chrome ja aberto com --remote-debugging-port")
     ap.add_argument("--headless", action="store_true",
                     help="Chrome headless em vez de janela, para contêiner e comparação")
-    ap.add_argument("--retry", type=int, default=0,
+    ap.add_argument("--retry", type=int, default=RETRY_ATTEMPTS,
                     help="tentativas extras quando a falha é passageira (portal, captcha, browser)")
-    ap.add_argument("--retry-wait", type=int, default=30,
+    ap.add_argument("--retry-wait", type=int, default=RETRY_WAIT_SECONDS,
                     help="segundos de espera entre tentativas")
     ap.add_argument("--log-format", choices=("texto", "jsonl"), default="texto",
                     help="texto: uma linha por passo; jsonl: um evento JSON por linha, "

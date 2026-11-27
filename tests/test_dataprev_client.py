@@ -71,6 +71,20 @@ class FakeSession:
         return FakeResponse(404, b"") if response is None else response
 
 
+class FlakySession(FakeSession):
+    """Sessão cujas primeiras chamadas falham por rede antes de responder de verdade."""
+
+    def __init__(self, routes, failures):
+        super().__init__(routes)
+        self.failures = list(failures)
+
+    def get(self, url, **kwargs):
+        if self.failures:
+            self.requests.append({"path": "falha", "params": None, "headers": {}})
+            raise self.failures.pop(0)
+        return super().get(url, **kwargs)
+
+
 def profile_body(**overrides):
     item = {"cpf": CPF, "numeroFamiliar": NUMERO_FAMILIAR, "identificador": IDENTIFICADOR,
             "tipoPerfil": {"codigo": 1, "nome": "Responsável Familiar"}}
@@ -222,13 +236,38 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "document_unavailable")
         self.assertEqual(error.exception.status, 404)
 
-    def test_empty_success_body_is_retried_once_after_a_pause(self):
+    def test_network_error_is_retried_within_the_same_session(self):
+        session = FlakySession({"/suporte/configuracao/token": FakeResponse(200, int(CPF))},
+                               [requests.ConnectionError("queda passageira")])
+        built = DataprevClient(jwt(), session=session, min_interval=0)
+        with patch("dataprev.client.time.sleep"):
+            self.assertEqual(built.identity(), CPF)
+        self.assertEqual(len(session.requests), 2)
+
+    def test_tls_error_is_not_retried(self):
+        session = FlakySession({"/suporte/configuracao/token": FakeResponse(200, int(CPF))},
+                               [requests.exceptions.SSLError("certificado")])
+        built = DataprevClient(jwt(), session=session, min_interval=0)
+        with self.assertRaises(ServiceError) as error:
+            built.identity()
+        self.assertEqual(error.exception.code, "tls_error")
+        self.assertEqual(len(session.requests), 1)
+
+    def test_empty_success_body_is_retried_with_growing_pauses(self):
         built = client({"/suporte/configuracao/token": FakeResponse(200, b"")})
         with patch("dataprev.client.time.sleep") as pause, self.assertRaises(ServiceError) as error:
             built.identity()
         self.assertEqual(error.exception.code, "upstream_empty_response")
-        self.assertEqual(len(built.session.requests), 2)
-        pause.assert_called_once_with(0)
+        self.assertEqual(len(built.session.requests), 4)
+        self.assertEqual([call.args[0] for call in pause.call_args_list], [0, 0, 0])
+
+    def test_empty_success_body_pauses_grow_from_the_call_rhythm(self):
+        built = DataprevClient(jwt(), session=FakeSession(
+            {"/suporte/configuracao/token": FakeResponse(200, b"")}), min_interval=1.0)
+        with patch("dataprev.client.time.sleep") as pause, self.assertRaises(ServiceError):
+            built.identity()
+        pausas = [round(call.args[0], 2) for call in pause.call_args_list]
+        self.assertEqual([pausa for pausa in pausas if pausa > 1.5], [2.0, 4.0, 8.0], pausas)
 
     def test_calls_are_paced_so_the_service_does_not_answer_empty(self):
         built = DataprevClient(jwt(), session=FakeSession(
