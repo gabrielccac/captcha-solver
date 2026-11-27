@@ -22,7 +22,7 @@ from dataprev.query import CREDENTIAL_CODES
 
 mcp = MCPServer("cadunico")
 _flow_lock = Lock()
-TIMEOUT_SECONDS = 300
+TIMEOUT_SECONDS = 600
 DOCUMENTS_DIR = Path(os.environ.get("DATAPREV_DOCUMENTS_DIR",
                                     str(Path.cwd() / "runs" / "mcp" / "dataprev")))
 ENV_FILE = os.environ.get("DATAPREV_ENV_FILE", ".env")
@@ -52,7 +52,9 @@ def get_cadunico_documents(cpf: str, password: str = "", api_key: str = "",
     Cada documento volta em documents com file_path local (PDF em modo 600) e os
     metadados do próprio Dataprev, incluindo qr_code e validacao_pdf.
     Falha em um documento não derruba o outro: leia complete e errors.
-    O credenciamento frio leva cerca de 90 segundos por causa do hCaptcha.
+    O credenciamento frio leva cerca de 90 segundos por causa do hCaptcha, e uma
+    falha passageira do portal ou do captcha é repetida até três vezes, cada uma
+    com uma sessão nova; o tempo limite cobre as três.
     Códigos de credencial e de navegador voltam em error_code, sem exceção;
     identidade divergente (identity_mismatch) indica CPF diferente do titular.
     """

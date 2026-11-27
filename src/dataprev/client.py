@@ -26,6 +26,12 @@ USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/158.0.0.0 Safari/537.36")
 TIMEOUT = (5, 60)
 MIN_INTERVAL = 1.2
+EMPTY_ATTEMPTS = 4
+# Erro de rede não é decisão do portal: repetir a mesma leitura custa segundos e não
+# um hCaptcha. Em 8 execuções reais, duas perderam o comprovante com o token já em
+# mãos por `connection_error`, que não era repetido em camada nenhuma.
+NETWORK_CODES = frozenset({"connection_error", "read_timeout", "connect_timeout",
+                           "request_timeout", "incomplete_http_response", "http_request_error"})
 MAX_BODY = 8_000_000
 
 TOKEN = "/suporte/configuracao/token"
@@ -174,20 +180,32 @@ class DataprevClient:
         self._last_call = time.monotonic()
 
     def _get(self, path: str, params: dict | None = None, receipt: dict | None = None):
-        """Uma leitura por chamada, com ritmo e uma nova tentativa em resposta vazia.
+        """Uma leitura por chamada, com ritmo e insistência enquanto a resposta vem vazia.
 
         Medido em 2026-11-24: chamadas em rajada fazem o serviço devolver 200 com
         corpo vazio de forma intermitente; com pausa entre elas não houve falha.
+        Em 4 execuções reais a resposta vazia sobreviveu a uma nova tentativa, então
+        o corpo vazio ganha três, com espera dobrando (2x, 4x e 8x o ritmo), que é o
+        que o serviço precisa para parar de responder em branco. Erro de rede entra na
+        mesma conta: a leitura é repetida antes de virar falha.
         """
         receipt = {} if receipt is None else receipt
         started = time.monotonic()
-        for attempt in range(2):
+        attempts = 0
+        for attempt in range(EMPTY_ATTEMPTS):
+            attempts = attempt + 1
             self._pace()
-            status, body = self._read(path, params, receipt)
+            try:
+                status, body = self._read(path, params, receipt)
+            except ServiceError as error:
+                if error.code not in NETWORK_CODES or attempts == EMPTY_ATTEMPTS:
+                    raise
+                time.sleep(self.min_interval * 2 ** attempts)
+                continue
             if status != 200 or body:
                 break
-            if attempt == 0:
-                time.sleep(self.min_interval * 2)
+            if attempts < EMPTY_ATTEMPTS:
+                time.sleep(self.min_interval * 2 ** attempts)
         receipt.setdefault("elapsed_ms", round((time.monotonic() - started) * 1000))
         if status == 401:
             raise ServiceError("not_authorized" if body else "session_expired", 401)
@@ -197,6 +215,7 @@ class DataprevClient:
                 code = "document_unavailable"
             raise ServiceError(code, status)
         if not body:
+            receipt["empty_attempts"] = attempts
             raise ServiceError("upstream_empty_response", 200)
         response = requests.Response()
         response.status_code = status

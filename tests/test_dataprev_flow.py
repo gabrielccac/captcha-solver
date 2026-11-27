@@ -13,7 +13,8 @@ PASSWORD = "senha-sintetica"
 API_KEY = "chave-sintetica"
 
 
-def run_flow(monkeypatch, tmp_path, extra=(), document="comprovante", login=None):
+def run_flow(monkeypatch, tmp_path, extra=(), document="comprovante", login=None, defaults=False):
+    """Executa o fluxo; por padrão sem retry, para o teste não dormir entre tentativas."""
     receipt_path = tmp_path / "receipt.json"
     seen = {}
 
@@ -30,7 +31,10 @@ def run_flow(monkeypatch, tmp_path, extra=(), document="comprovante", login=None
     monkeypatch.setenv("GOVBR_PASSWORD", PASSWORD)
     monkeypatch.setenv("OPENROUTER_API_KEY", API_KEY)
     monkeypatch.setattr(dataprev_flow, "login", login or stub_login)
-    monkeypatch.setattr(sys, "argv", ["flow", "--out", str(tmp_path), "--document", document, *extra])
+    argv = ["flow", "--out", str(tmp_path), "--document", document, *extra]
+    if not defaults and "--retry" not in argv:
+        argv += ["--retry", "0"]
+    monkeypatch.setattr(sys, "argv", argv)
     code = dataprev_flow.main()
     return code, json.loads(receipt_path.read_text(encoding="utf-8")), seen.get("receipt", {})
 
@@ -122,6 +126,23 @@ def test_retry_nao_insiste_em_erro_de_credencial(monkeypatch, tmp_path, capsys):
     assert code == 3
     assert len(chamadas) == 1
     assert len(final["attempts"]) == 1
+
+
+def test_o_padrao_do_produto_repete_a_falha_passageira_ate_tres_vezes(monkeypatch, tmp_path, capsys):
+    chamadas = []
+
+    def login(session, cpf, password, api_key, *, receipt=None, cdp_url="", progress=None,
+              headless=False):
+        chamadas.append(1)
+        receipt.update(phase_events=[], success=False)
+        raise AuthError("token_not_captured")
+
+    code, final, _ = run_flow(monkeypatch, tmp_path, extra=("--retry-wait", "0"),
+                              login=login, defaults=True)
+    assert code == 3
+    assert len(chamadas) == dataprev_flow.RETRY_ATTEMPTS + 1
+    assert [tentativa["tentativa"] for tentativa in final["attempts"]] == [1, 2, 3]
+    assert final["code"] == "token_not_captured"
 
 
 @pytest.mark.parametrize("codigo", ["token_not_captured", "identity_failed", "browser_error",

@@ -38,10 +38,12 @@ WAIT_SECONDS = 40
 # 548 ms); nas falhas silenciosas ele nunca veio. A janela curta é 8 s — 4,4x o
 # pior caso medido — e só é esticada para 20 s enquanto a aplicação ainda não
 # carregou: nas falhas medidas o documento já estava em "/" e o token não veio, então
-# esperar além disso só gasta tempo. A espera do gateway segue 40 s, que cobre o SSO.
+# esperar além disso só gasta tempo. Depois do documento a margem é 6 s: em 29
+# execuções o token chegou até 4,8 s depois dele (mediana ~1 s). A espera do gateway
+# segue 40 s, que cobre o SSO.
 TOKEN_WAIT_SECONDS = 8
 TOKEN_SLOW_SECONDS = 20
-TOKEN_AFTER_DOCUMENT_SECONDS = 4
+TOKEN_AFTER_DOCUMENT_SECONDS = 6
 POLL_SECONDS = 0.5
 TRANSIENT_RETRIES = 2
 TRANSIENT_WAIT_SECONDS = 5
